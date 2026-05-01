@@ -45,6 +45,34 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # ── Deterministic debug signing ─────────────────────────────────────────
+      # When `secrets.DEBUG_KEYSTORE_BASE64` is configured in the repository,
+      # the keystore is decoded here and the four signing env vars are written
+      # to $GITHUB_ENV so every subsequent Gradle step picks them up
+      # automatically.  This ensures the debug APK always carries the same
+      # SHA-256 certificate fingerprint, making it stable for use in
+      # `ANDROID_APP_SHA256_FINGERPRINTS` on the server side.
+      #
+      # Required repository secrets (all must be set together):
+      #   DEBUG_KEYSTORE_BASE64    – base64-encoded .jks / .keystore file
+      #   DEBUG_KEYSTORE_PASSWORD  – store password
+      #   DEBUG_KEY_ALIAS          – key alias inside the keystore
+      #   DEBUG_KEY_PASSWORD       – key password
+      #
+      # When none of these secrets are set the step is skipped entirely and
+      # the signing env vars are never exported, so both build steps below fall
+      # back to the default Android debug keystore.  Forks and pull requests
+      # from external contributors keep working without any secrets configured.
+      - name: Decode debug keystore
+        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          KEYSTORE_PATH="${{ github.workspace }}/debug.keystore"
+          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+          echo "DEBUG_KEYSTORE_PATH=$KEYSTORE_PATH"          >> "$GITHUB_ENV"
+          echo "DEBUG_KEYSTORE_PASSWORD=${{ secrets.DEBUG_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "DEBUG_KEY_ALIAS=${{ secrets.DEBUG_KEY_ALIAS }}"           >> "$GITHUB_ENV"
+          echo "DEBUG_KEY_PASSWORD=${{ secrets.DEBUG_KEY_PASSWORD }}"     >> "$GITHUB_ENV"
+
       - name: Build debug APK
         run: ./gradlew :android:assembleDebug
 
