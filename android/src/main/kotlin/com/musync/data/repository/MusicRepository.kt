@@ -7,4 +7,6 @@ interface MusicRepository {
     val currentTrack: Flow<Track?>
 
     val queue: Flow<List<Track>>
+
+    fun updateQueue(tracks: List<Track>)
 }

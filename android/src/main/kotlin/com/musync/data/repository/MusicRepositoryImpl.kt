@@ -26,4 +26,8 @@ class MusicRepositoryImpl
         override val currentTrack: Flow<Track?> = _currentTrack.asStateFlow()
 
         override val queue: Flow<List<Track>> = _queue.asStateFlow()
+
+        override fun updateQueue(tracks: List<Track>) {
+            _queue.value = tracks
+        }
     }
