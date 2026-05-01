@@ -154,18 +154,20 @@ describe('MuSync server', () => {
 
   // ── QUEUE_UPDATED ─────────────────────────────────────────────────────────
   describe('QUEUE_UPDATED', () => {
-    it('relays queue to other room members', async () => {
+    it('relays normalized queue (only id and title) to other room members', async () => {
       const [alice, bob] = await Promise.all([connect(), connect()]);
 
       await joinRoom(alice, 'room-q');
       await joinRoom(bob, 'room-q');
 
+      // The payload includes extra client-only fields; the server normalizes to { id, title }.
       const queue = [{ id: '1', title: 'Song', artist: 'Artist', youtubeVideoId: 'abc', durationMs: 180000 }];
       const queueReceived = once(bob, 'QUEUE_UPDATED');
       alice.emit('QUEUE_UPDATED', { roomId: 'room-q', queue });
 
       const received = await queueReceived;
-      expect(received).toEqual(queue);
+      // Only id and title are forwarded — extra fields are stripped by normalization.
+      expect(received).toEqual([{ id: '1', title: 'Song' }]);
 
       alice.disconnect();
       bob.disconnect();
