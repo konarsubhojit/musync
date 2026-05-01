@@ -60,6 +60,14 @@ android {
             excludes += "/META-INF/io.netty.versions.properties"
         }
     }
+
+    testOptions {
+        unitTests {
+            // Return default values (0 / null / false) for stubbed Android framework
+            // methods such as android.util.Log.* used by AppLogger, instead of throwing.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -68,6 +76,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.documentfile)
 
     // Compose
     implementation(platform(libs.androidx.compose.bom))

@@ -3,6 +3,7 @@ package com.musync.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.data.repository.MusicRepository
+import com.musync.logging.AppLogger
 import com.musync.sync.QueueManager
 import com.musync.util.RoomLinkParser
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -74,8 +75,13 @@ class HomeViewModel
         fun onJoinConfirm() {
             val parsed = RoomLinkParser.extractRoomId(formStateFlow.value.joinInput)
             if (parsed == null) {
+                AppLogger.w(
+                    TAG,
+                    "Rejected invalid join input: \"${formStateFlow.value.joinInput}\"",
+                )
                 formStateFlow.update { it.copy(joinError = true) }
             } else {
+                AppLogger.i(TAG, "Join confirmed for room $parsed")
                 formStateFlow.update { it.copy(pendingJoinRoomId = parsed, joinError = false) }
             }
         }
@@ -89,5 +95,9 @@ class HomeViewModel
                     joinInput = "",
                 )
             }
+        }
+
+        private companion object {
+            const val TAG = "HomeViewModel"
         }
     }

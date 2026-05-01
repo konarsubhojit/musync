@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import com.musync.logging.AppLogger
 import com.musync.navigation.MuSyncNavGraph
 import com.musync.ui.theme.MuSyncTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -17,6 +18,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogger.i(TAG, "MainActivity onCreate (intent=${intent?.dataString ?: "<none>"})")
         enableEdgeToEdge()
         setContent {
             val controller = rememberNavController()
@@ -34,8 +36,17 @@ class MainActivity : ComponentActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        AppLogger.i(TAG, "onNewIntent: ${intent.dataString ?: "<no data>"}")
         if (::navController.isInitialized) {
-            navController.handleDeepLink(intent)
+            try {
+                navController.handleDeepLink(intent)
+            } catch (t: Throwable) {
+                AppLogger.e(TAG, "Failed to handle deep link ${intent.dataString}", t)
+            }
         }
+    }
+
+    private companion object {
+        const val TAG = "MainActivity"
     }
 }

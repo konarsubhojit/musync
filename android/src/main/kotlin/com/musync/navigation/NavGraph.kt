@@ -11,11 +11,14 @@ import androidx.navigation.navDeepLink
 import com.musync.ui.createroom.CreateRoomScreen
 import com.musync.ui.home.HomeScreen
 import com.musync.ui.player.PlayerScreen
+import com.musync.ui.settings.SettingsScreen
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
 
     data object CreateRoom : Screen("create_room")
+
+    data object Settings : Screen("settings")
 
     data object Player : Screen("player?roomId={roomId}&videoId={videoId}") {
         /** Route used when navigating to the player without any pre-supplied IDs. */
@@ -44,7 +47,11 @@ fun MuSyncNavGraph(
                 onNavigateToPlayer = { navController.navigate(Screen.Player.BASE_ROUTE) },
                 onCreateRoom = { navController.navigate(Screen.CreateRoom.route) },
                 onJoinRoom = { roomId -> navController.navigate(Screen.Player.routeWithRoom(roomId)) },
+                onOpenSettings = { navController.navigate(Screen.Settings.route) },
             )
+        }
+        composable(Screen.Settings.route) {
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
         composable(Screen.CreateRoom.route) {
             CreateRoomScreen(
