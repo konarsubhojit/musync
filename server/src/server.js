@@ -75,19 +75,24 @@ function createApp(options = {}) {
    * @returns {Promise<RoomData>}
    */
   async function updateRoomState(socketId, roomId, isPlaying, positionMs) {
-    const existing = await roomStore.getRoom(roomId);
-    const roomData = {
-      roomId,
-      hostId: existing?.hostId ?? socketId,
-      playbackState: isPlaying ? 'PLAYING' : 'PAUSED',
-      isPlaying,
-      positionMs,
-      currentVideo: existing?.currentVideo ?? null,
-      queue: existing?.queue ?? [],
-      updatedAt: Date.now(),
-    };
-    await roomStore.setRoom(roomId, roomData);
-    return roomData;
+    try {
+      const existing = await roomStore.getRoom(roomId);
+      const roomData = {
+        roomId,
+        hostId: existing?.hostId ?? socketId,
+        playbackState: isPlaying ? 'PLAYING' : 'PAUSED',
+        isPlaying,
+        positionMs,
+        currentVideo: existing?.currentVideo ?? null,
+        queue: existing?.queue ?? [],
+        updatedAt: Date.now(),
+      };
+      await roomStore.setRoom(roomId, roomData);
+      return roomData;
+    } catch (err) {
+      console.error(`[roomStore] updateRoomState failed  room=${roomId}:`, err);
+      throw err;
+    }
   }
 
   /**
@@ -138,8 +143,13 @@ function createApp(options = {}) {
       console.log(`[socket] joined     id=${socket.id}  room=${roomId}`);
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
       if (typeof ack === 'function') {
-        const roomData = await roomStore.getRoom(roomId);
-        ack({ ok: true, state: roomData ?? null });
+        try {
+          const roomData = await roomStore.getRoom(roomId);
+          ack({ ok: true, state: roomData ?? null });
+        } catch (err) {
+          console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
+          ack({ error: 'failed to load room state' });
+        }
       }
     });
 
@@ -176,10 +186,16 @@ function createApp(options = {}) {
       if (typeof roomId !== 'string' || roomId.trim() === '') {
         return;
       }
-      if (Array.isArray(queue)) {
-        const existing = await roomStore.getRoom(roomId);
+      if (!socket.rooms.has(roomId)) {
+        return;
+      }
+      if (!Array.isArray(queue)) {
+        return;
+      }
+      try {
         // Discard items that don't satisfy the VideoRef shape so validation passes.
         const normalized = queue.filter(isVideoRef).map(({ id, title }) => ({ id, title }));
+        const existing = await roomStore.getRoom(roomId);
         // If no PLAY/PAUSE/SEEK has run yet, bootstrap a PAUSED room state so
         // the queue is never silently dropped.
         const base = existing ?? {
@@ -199,8 +215,11 @@ function createApp(options = {}) {
           currentVideo: normalized[0] ?? null,
           updatedAt: Date.now(),
         });
+        // Broadcast the normalized queue so peers see the same data as the store.
+        socket.to(roomId).emit('QUEUE_UPDATED', normalized);
+      } catch (err) {
+        console.error(`[socket] QUEUE_UPDATED failed  id=${socket.id}  room=${roomId}:`, err);
       }
-      socket.to(roomId).emit('QUEUE_UPDATED', queue);
     });
 
     // ── PLAY ───────────────────────────────────────────────────────────────
@@ -212,8 +231,12 @@ function createApp(options = {}) {
       if (!socket.rooms.has(roomId)) return;
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
-      const roomData = await updateRoomState(socket.id, roomId, true, pos);
-      socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
+      try {
+        const roomData = await updateRoomState(socket.id, roomId, true, pos);
+        socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
+      } catch (err) {
+        console.error(`[socket] PLAY failed  id=${socket.id}  room=${roomId}:`, err);
+      }
     });
 
     // ── PAUSE ──────────────────────────────────────────────────────────────
@@ -225,8 +248,12 @@ function createApp(options = {}) {
       if (!socket.rooms.has(roomId)) return;
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
-      const roomData = await updateRoomState(socket.id, roomId, false, pos);
-      socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
+      try {
+        const roomData = await updateRoomState(socket.id, roomId, false, pos);
+        socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
+      } catch (err) {
+        console.error(`[socket] PAUSE failed  id=${socket.id}  room=${roomId}:`, err);
+      }
     });
 
     // ── SEEK ───────────────────────────────────────────────────────────────
@@ -238,12 +265,16 @@ function createApp(options = {}) {
       if (!socket.rooms.has(roomId)) return;
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
-      // Preserve the current isPlaying flag; default to false (paused) when
-      // no prior PLAY/PAUSE event has established room state yet.
-      const existing = await roomStore.getRoom(roomId);
-      const isPlaying = existing?.isPlaying ?? false;
-      const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
-      socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
+      try {
+        // Preserve the current isPlaying flag; default to false (paused) when
+        // no prior PLAY/PAUSE event has established room state yet.
+        const existing = await roomStore.getRoom(roomId);
+        const isPlaying = existing?.isPlaying ?? false;
+        const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
+        socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
+      } catch (err) {
+        console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
+      }
     });
 
     // ── disconnecting ──────────────────────────────────────────────────────

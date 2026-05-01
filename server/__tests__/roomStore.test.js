@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateRoomData, isVideoRef, ROOM_TTL_SECONDS } = require('../src/roomStore');
+const { validateRoomData, isVideoRef, createRoomStore, ROOM_TTL_SECONDS } = require('../src/roomStore');
 const { createApp } = require('../src/server');
 const { io: ioc } = require('socket.io-client');
 
@@ -71,6 +71,14 @@ describe('validateRoomData', () => {
     expect(() => validateRoomData({ ...valid, isPlaying: 1 })).toThrow(TypeError);
   });
 
+  it('throws when isPlaying is inconsistent with playbackState (PLAYING + false)', () => {
+    expect(() => validateRoomData({ ...valid, playbackState: 'PLAYING', isPlaying: false })).toThrow(TypeError);
+  });
+
+  it('throws when isPlaying is inconsistent with playbackState (PAUSED + true)', () => {
+    expect(() => validateRoomData({ ...valid, playbackState: 'PAUSED', isPlaying: true })).toThrow(TypeError);
+  });
+
   it('throws when positionMs is negative', () => {
     expect(() => validateRoomData({ ...valid, positionMs: -1 })).toThrow(TypeError);
   });
@@ -116,6 +124,25 @@ describe('validateRoomData', () => {
   it('throws when queue is not an array', () => {
     expect(() => validateRoomData({ ...valid, queue: null })).toThrow(TypeError);
   });
+
+  it('throws when updatedAt is missing', () => {
+    const noUpdatedAt = Object.fromEntries(
+      Object.entries(valid).filter(([k]) => k !== 'updatedAt'),
+    );
+    expect(() => validateRoomData(noUpdatedAt)).toThrow(TypeError);
+  });
+
+  it('throws when updatedAt is NaN', () => {
+    expect(() => validateRoomData({ ...valid, updatedAt: NaN })).toThrow(TypeError);
+  });
+
+  it('throws when updatedAt is negative', () => {
+    expect(() => validateRoomData({ ...valid, updatedAt: -1 })).toThrow(TypeError);
+  });
+
+  it('throws when updatedAt is a string', () => {
+    expect(() => validateRoomData({ ...valid, updatedAt: '12345' })).toThrow(TypeError);
+  });
 });
 
 // ── ROOM_TTL_SECONDS ──────────────────────────────────────────────────────────
@@ -150,6 +177,63 @@ describe('isVideoRef', () => {
   });
 });
 
+// ── createRoomStore (unit tests) ──────────────────────────────────────────────
+
+describe('createRoomStore (in-memory)', () => {
+  it('returns null for an unknown room', async () => {
+    const store = createRoomStore();
+    expect(await store.getRoom('unknown')).toBeNull();
+  });
+
+  it('stores and retrieves valid RoomData', async () => {
+    const store = createRoomStore();
+    const room = {
+      roomId: 'r1',
+      hostId: null,
+      playbackState: 'PAUSED',
+      isPlaying: false,
+      positionMs: 0,
+      currentVideo: null,
+      queue: [],
+      updatedAt: Date.now(),
+    };
+    await store.setRoom('r1', room);
+    expect(await store.getRoom('r1')).toEqual(room);
+  });
+
+  it('rejects invalid RoomData in setRoom', async () => {
+    const store = createRoomStore();
+    await expect(store.setRoom('r1', { roomId: '' })).rejects.toThrow(TypeError);
+  });
+
+  it('deletes a room', async () => {
+    const store = createRoomStore();
+    const room = {
+      roomId: 'r-del',
+      hostId: null,
+      playbackState: 'PAUSED',
+      isPlaying: false,
+      positionMs: 0,
+      currentVideo: null,
+      queue: [],
+      updatedAt: Date.now(),
+    };
+    await store.setRoom('r-del', room);
+    await store.deleteRoom('r-del');
+    expect(await store.getRoom('r-del')).toBeNull();
+  });
+});
+
+// ── Helpers for integration tests ─────────────────────────────────────────────
+
+/**
+ * Creates a fresh, isolated in-memory room store for each test suite.
+ * Passing this into createApp ensures tests never accidentally hit Redis.
+ */
+function makeTestStore() {
+  return createRoomStore(); // no env vars in test environment → always in-memory
+}
+
 // ── Redis schema fields in join_room state ────────────────────────────────────
 
 describe('Redis schema fields', () => {
@@ -172,7 +256,9 @@ describe('Redis schema fields', () => {
   }
 
   beforeAll((done) => {
-    ({ httpServer, io } = createApp());
+    // Inject an explicit in-memory store so these tests are hermetic regardless
+    // of whether UPSTASH_REDIS_REST_URL/TOKEN happen to be set in the environment.
+    ({ httpServer, io } = createApp({ roomStore: makeTestStore() }));
     httpServer.listen(0, () => {
       const { port } = httpServer.address();
       serverUrl = `http://localhost:${port}`;
@@ -184,9 +270,10 @@ describe('Redis schema fields', () => {
     io.close(done);
   });
 
-  it('state includes hostId (first PLAY sender) and playbackState after PLAY', async () => {
+  it('state includes hostId, playbackState, and updatedAt after PLAY', async () => {
     const alice = await connect();
     await joinRoom(alice, 'schema-play');
+    const before = Date.now();
     alice.emit('PLAY', { roomId: 'schema-play', positionMs: 1000 });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -202,6 +289,9 @@ describe('Redis schema fields', () => {
       currentVideo: null,
       queue: [],
     });
+    // updatedAt should be a reasonable timestamp
+    expect(typeof ack.state.updatedAt).toBe('number');
+    expect(ack.state.updatedAt).toBeGreaterThanOrEqual(before);
 
     alice.disconnect();
     bob.disconnect();
@@ -249,6 +339,56 @@ describe('Redis schema fields', () => {
     carol.disconnect();
   });
 
+  it('SEEK preserves isPlaying=true and original hostId', async () => {
+    const [alice, bob] = await Promise.all([connect(), connect()]);
+    await joinRoom(alice, 'schema-seek-playing');
+    await joinRoom(bob, 'schema-seek-playing');
+
+    alice.emit('PLAY', { roomId: 'schema-seek-playing', positionMs: 1000 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Bob seeks — must not change isPlaying or hostId
+    bob.emit('SEEK', { roomId: 'schema-seek-playing', positionMs: 45000 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const carol = await connect();
+    const ack = await joinRoom(carol, 'schema-seek-playing');
+
+    expect(ack.state).toMatchObject({
+      hostId: alice.id,
+      playbackState: 'PLAYING',
+      isPlaying: true,
+      positionMs: 45000,
+    });
+
+    alice.disconnect();
+    bob.disconnect();
+    carol.disconnect();
+  });
+
+  it('SEEK preserves isPlaying=false when room was PAUSED', async () => {
+    const alice = await connect();
+    await joinRoom(alice, 'schema-seek-paused');
+
+    alice.emit('PAUSE', { roomId: 'schema-seek-paused', positionMs: 3000 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    alice.emit('SEEK', { roomId: 'schema-seek-paused', positionMs: 20000 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const bob = await connect();
+    const ack = await joinRoom(bob, 'schema-seek-paused');
+
+    expect(ack.state).toMatchObject({
+      playbackState: 'PAUSED',
+      isPlaying: false,
+      positionMs: 20000,
+    });
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
   it('queue and currentVideo are persisted via QUEUE_UPDATED', async () => {
     const alice = await connect();
     await joinRoom(alice, 'schema-queue');
@@ -270,6 +410,39 @@ describe('Redis schema fields', () => {
     expect(ack.state.queue).toEqual(tracks);
     // currentVideo is derived from the first item in the queue
     expect(ack.state.currentVideo).toEqual({ id: 'v1', title: 'Track 1' });
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  it('QUEUE_UPDATED filters out invalid items; only valid entries are persisted', async () => {
+    const alice = await connect();
+    await joinRoom(alice, 'schema-queue-filter');
+
+    alice.emit('PLAY', { roomId: 'schema-queue-filter', positionMs: 0 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Mix valid and invalid items
+    const mixedQueue = [
+      { id: 'v1', title: 'Valid Track' },
+      { id: '', title: 'Empty id — invalid' },
+      { id: 'v2', title: '' }, // empty title — invalid
+      null,
+      { title: 'Missing id — invalid' },
+      { id: 'v3', title: 'Another Valid' },
+    ];
+    alice.emit('QUEUE_UPDATED', { roomId: 'schema-queue-filter', queue: mixedQueue });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const bob = await connect();
+    const ack = await joinRoom(bob, 'schema-queue-filter');
+
+    // Only the two valid entries should be stored
+    expect(ack.state.queue).toEqual([
+      { id: 'v1', title: 'Valid Track' },
+      { id: 'v3', title: 'Another Valid' },
+    ]);
+    expect(ack.state.currentVideo).toEqual({ id: 'v1', title: 'Valid Track' });
 
     alice.disconnect();
     bob.disconnect();
@@ -335,3 +508,104 @@ describe('Redis schema fields', () => {
     alice.disconnect();
   });
 });
+
+// ── cleanupRoomState (mock store) ─────────────────────────────────────────────
+
+describe('cleanupRoomState', () => {
+  let httpServer, io, serverUrl;
+
+  function connect() {
+    return new Promise((resolve) => {
+      const socket = ioc(serverUrl, { forceNew: true });
+      socket.on('connect', () => resolve(socket));
+    });
+  }
+
+  function joinRoom(socket, roomId) {
+    return new Promise((resolve, reject) => {
+      socket.emit('join_room', roomId, (ack) => {
+        if (ack && ack.error) reject(new Error(ack.error));
+        else resolve(ack);
+      });
+    });
+  }
+
+  function leaveRoom(socket, roomId) {
+    return new Promise((resolve, reject) => {
+      socket.emit('leave_room', roomId, (ack) => {
+        if (ack && ack.error) reject(new Error(ack.error));
+        else resolve(ack);
+      });
+    });
+  }
+
+  let fakeStore;
+
+  beforeEach((done) => {
+    // Fresh mock store for each test
+    const inner = createRoomStore();
+    fakeStore = {
+      getRoom: jest.fn((...args) => inner.getRoom(...args)),
+      setRoom: jest.fn((...args) => inner.setRoom(...args)),
+      deleteRoom: jest.fn((...args) => inner.deleteRoom(...args)),
+    };
+    ({ httpServer, io } = createApp({ roomStore: fakeStore }));
+    httpServer.listen(0, () => {
+      const { port } = httpServer.address();
+      serverUrl = `http://localhost:${port}`;
+      done();
+    });
+  });
+
+  afterEach((done) => {
+    io.close(done);
+  });
+
+  it('does NOT call deleteRoom when one member remains after another leaves', async () => {
+    const [alice, bob] = await Promise.all([connect(), connect()]);
+    await joinRoom(alice, 'cleanup-room');
+    await joinRoom(bob, 'cleanup-room');
+
+    fakeStore.deleteRoom.mockClear();
+    await leaveRoom(alice, 'cleanup-room');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fakeStore.deleteRoom).not.toHaveBeenCalled();
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  it('calls deleteRoom once when the last member leaves via leave_room', async () => {
+    const alice = await connect();
+    await joinRoom(alice, 'cleanup-last');
+
+    fakeStore.deleteRoom.mockClear();
+    await leaveRoom(alice, 'cleanup-last');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fakeStore.deleteRoom).toHaveBeenCalledTimes(1);
+    expect(fakeStore.deleteRoom).toHaveBeenCalledWith('cleanup-last');
+
+    alice.disconnect();
+  });
+
+  it('handles deleteRoom throwing without crashing the server', async () => {
+    fakeStore.deleteRoom.mockRejectedValueOnce(new Error('Redis timeout'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const alice = await connect();
+    await joinRoom(alice, 'cleanup-throw');
+    await leaveRoom(alice, 'cleanup-throw');
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Server still running — we can connect again
+    const bob = await connect();
+    expect(bob.connected).toBe(true);
+
+    errorSpy.mockRestore();
+    alice.disconnect();
+    bob.disconnect();
+  });
+});
+

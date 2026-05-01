@@ -52,7 +52,7 @@ function validateRoomData(data) {
     throw new TypeError('RoomData must be a non-null object');
   }
 
-  const { roomId, hostId, playbackState, isPlaying, positionMs, currentVideo, queue } = data;
+  const { roomId, hostId, playbackState, isPlaying, positionMs, currentVideo, queue, updatedAt } = data;
 
   if (typeof roomId !== 'string' || roomId.trim() === '') {
     throw new TypeError('RoomData.roomId must be a non-empty string');
@@ -70,6 +70,11 @@ function validateRoomData(data) {
     throw new TypeError('RoomData.isPlaying must be a boolean');
   }
 
+  // isPlaying must be consistent with playbackState.
+  if (isPlaying !== (playbackState === 'PLAYING')) {
+    throw new TypeError('RoomData.isPlaying must be consistent with playbackState');
+  }
+
   if (typeof positionMs !== 'number' || !Number.isFinite(positionMs) || positionMs < 0) {
     throw new TypeError('RoomData.positionMs must be a non-negative finite number');
   }
@@ -84,6 +89,10 @@ function validateRoomData(data) {
     throw new TypeError(
       'RoomData.queue must be an array of objects with non-empty string fields id and title',
     );
+  }
+
+  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt) || updatedAt < 0) {
+    throw new TypeError('RoomData.updatedAt must be a non-negative finite number');
   }
 
   return /** @type {RoomData} */ (data);
@@ -111,12 +120,21 @@ function createRoomStore() {
 
     return {
       /**
-       * Fetches room data from Redis.
+       * Fetches room data from Redis, validates the shape, and returns it.
+       * Returns `null` (and logs a warning) when the stored value is absent
+       * or fails schema validation, so callers never receive malformed data.
        * @param {string} roomId
        * @returns {Promise<RoomData|null>}
        */
       async getRoom(roomId) {
-        return redis.get(`room:${roomId}`);
+        const raw = await redis.get(`room:${roomId}`);
+        if (raw === null || raw === undefined) return null;
+        try {
+          return validateRoomData(raw);
+        } catch (err) {
+          console.warn(`[roomStore] Redis key room:${roomId} contains invalid data — ignoring:`, err.message);
+          return null;
+        }
       },
 
       /**
