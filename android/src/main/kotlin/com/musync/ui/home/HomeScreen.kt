@@ -67,12 +67,11 @@ fun HomeScreen(
         // ── Queue ─────────────────────────────────────────────────────────────
         if (queue.isNotEmpty()) {
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Up Next",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             )
             LazyColumn {
                 items(items = queue, key = { it.id }) { track ->
