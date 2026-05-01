@@ -13,14 +13,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
@@ -38,52 +46,90 @@ import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var youTubePlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
+    val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black),
-    ) {
-        // Video area with overlay controls
-        Box(
+    // Show snackbar briefly when the invite link has been copied.
+    LaunchedEffect(uiState.inviteLinkCopied) {
+        if (uiState.inviteLinkCopied) {
+            snackbarHostState.showSnackbar("Invite link copied to clipboard")
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = Color.Black,
+    ) { paddingValues ->
+        Column(
             modifier =
                 Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f),
+                    .fillMaxSize()
+                    .padding(paddingValues),
         ) {
-            YouTubePlayerComposable(
-                videoId = uiState.videoId,
-                onPlayerReady = { player -> youTubePlayer = player },
-                onStateChange = { state ->
-                    viewModel.onPlaybackStateChanged(
-                        isPlaying = state == PlayerConstants.PlayerState.PLAYING,
-                        isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
-                    )
-                },
-                onCurrentSecond = viewModel::onCurrentSecond,
-                onDuration = viewModel::onDurationReceived,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            // Custom controls overlay
-            PlayerOverlayControls(
-                isPlaying = uiState.isPlaying,
-                isBuffering = uiState.isBuffering,
-                playerReady = youTubePlayer != null,
-                currentSecond = uiState.currentSecond,
-                duration = uiState.duration,
-                trackTitle = uiState.trackTitle,
-                onPlayPause = {
-                    val player = youTubePlayer ?: return@PlayerOverlayControls
-                    if (uiState.isPlaying) player.pause() else player.play()
-                },
-                onSeek = { second -> youTubePlayer?.seekTo(second) },
+            // Video area with overlay controls
+            Box(
                 modifier =
                     Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
-            )
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+            ) {
+                YouTubePlayerComposable(
+                    videoId = uiState.videoId,
+                    onPlayerReady = { player -> youTubePlayer = player },
+                    onStateChange = { state ->
+                        viewModel.onPlaybackStateChanged(
+                            isPlaying = state == PlayerConstants.PlayerState.PLAYING,
+                            isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
+                        )
+                    },
+                    onCurrentSecond = viewModel::onCurrentSecond,
+                    onDuration = viewModel::onDurationReceived,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                // Custom controls overlay
+                PlayerOverlayControls(
+                    isPlaying = uiState.isPlaying,
+                    isBuffering = uiState.isBuffering,
+                    playerReady = youTubePlayer != null,
+                    currentSecond = uiState.currentSecond,
+                    duration = uiState.duration,
+                    trackTitle = uiState.trackTitle,
+                    onPlayPause = {
+                        val player = youTubePlayer ?: return@PlayerOverlayControls
+                        if (uiState.isPlaying) player.pause() else player.play()
+                    },
+                    onSeek = { second -> youTubePlayer?.seekTo(second) },
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                )
+            }
+
+            // Share invite button
+            if (uiState.inviteLink.isNotEmpty()) {
+                Button(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(uiState.inviteLink))
+                        viewModel.onInviteLinkCopied()
+                    },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = "Share invite link",
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = "Share Invite",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
         }
     }
 }

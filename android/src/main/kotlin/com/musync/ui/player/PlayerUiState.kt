@@ -7,4 +7,6 @@ data class PlayerUiState(
     val currentSecond: Float = 0f,
     val duration: Float = 0f,
     val isBuffering: Boolean = false,
+    val inviteLink: String = "",
+    val inviteLinkCopied: Boolean = false,
 )
