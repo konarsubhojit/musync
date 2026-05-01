@@ -1,11 +1,19 @@
 package com.musync.ui.player
 
+import androidx.lifecycle.SavedStateHandle
+import com.musync.data.model.PlayerState
+import com.musync.data.model.Session
+import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.SessionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -14,6 +22,9 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -44,7 +55,7 @@ class PlayerViewModelTest {
     @Test
     fun `initial state has empty videoId and is not playing`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             val state = viewModel.uiState.value
             assertEquals("", state.videoId)
             assertFalse(state.isPlaying)
@@ -54,7 +65,7 @@ class PlayerViewModelTest {
     fun `init collects current track from repository and updates videoId`() =
         runTest {
             val repo = FakeMusicRepository(initialTrack = sampleTrack)
-            val viewModel = PlayerViewModel(repo)
+            val viewModel = PlayerViewModel(SavedStateHandle(), repo, FakeSessionRepository())
             advanceUntilIdle()
             assertEquals("testVideoId", viewModel.uiState.value.videoId)
             assertEquals("Test Song", viewModel.uiState.value.trackTitle)
@@ -63,7 +74,7 @@ class PlayerViewModelTest {
     @Test
     fun `onPlaybackStateChanged sets isPlaying to true`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             viewModel.onPlaybackStateChanged(isPlaying = true)
             assertTrue(viewModel.uiState.value.isPlaying)
         }
@@ -71,7 +82,7 @@ class PlayerViewModelTest {
     @Test
     fun `onPlaybackStateChanged sets isPlaying to false`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             viewModel.onPlaybackStateChanged(isPlaying = true)
             viewModel.onPlaybackStateChanged(isPlaying = false)
             assertFalse(viewModel.uiState.value.isPlaying)
@@ -80,7 +91,7 @@ class PlayerViewModelTest {
     @Test
     fun `onPlaybackStateChanged sets isBuffering`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             viewModel.onPlaybackStateChanged(isPlaying = false, isBuffering = true)
             assertTrue(viewModel.uiState.value.isBuffering)
         }
@@ -88,7 +99,7 @@ class PlayerViewModelTest {
     @Test
     fun `onCurrentSecond updates currentSecond state`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             viewModel.onCurrentSecond(42.5f)
             assertEquals(42.5f, viewModel.uiState.value.currentSecond)
         }
@@ -96,12 +107,63 @@ class PlayerViewModelTest {
     @Test
     fun `onDurationReceived updates duration state`() =
         runTest {
-            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
             viewModel.onDurationReceived(180f)
             assertEquals(180f, viewModel.uiState.value.duration)
         }
 
-    // --- Fake repository ---
+    // --- Deep link tests ---
+
+    @Test
+    fun `joins session when roomId is provided via SavedStateHandle`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            PlayerViewModel(
+                SavedStateHandle(mapOf("roomId" to "room-abc")),
+                FakeMusicRepository(),
+                sessionRepo,
+            )
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            assertEquals("room-abc", joined!!.sessionId)
+        }
+
+    @Test
+    fun `does not join session when roomId is absent`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), sessionRepo)
+            assertNull(sessionRepo.session.value)
+        }
+
+    @Test
+    fun `does not join session when roomId is blank`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            PlayerViewModel(
+                SavedStateHandle(mapOf("roomId" to "   ")),
+                FakeMusicRepository(),
+                sessionRepo,
+            )
+            assertNull(sessionRepo.session.value)
+        }
+
+    @Test
+    fun `joined session from deep link has different hostId and localUserId (guest)`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            PlayerViewModel(
+                SavedStateHandle(mapOf("roomId" to "room-xyz")),
+                FakeMusicRepository(),
+                sessionRepo,
+            )
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            assertEquals(PlayerViewModel.DEEP_LINK_HOST_ID_PLACEHOLDER, joined!!.hostId)
+            assertNotEquals(joined.hostId, joined.localUserId)
+        }
+
+    // --- Fake repositories ---
 
     private class FakeMusicRepository(
         initialTrack: Track? = null,
@@ -111,5 +173,21 @@ class PlayerViewModelTest {
         override val currentTrack: Flow<Track?> = trackFlow
 
         override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+    }
+
+    private class FakeSessionRepository : SessionRepository {
+        private val _session = MutableStateFlow<Session?>(null)
+        override val session: StateFlow<Session?> = _session
+        override val events: SharedFlow<SyncEvent> = MutableSharedFlow()
+
+        override fun onPlayerStateChanged(state: PlayerState) = Unit
+
+        override fun joinSession(session: Session) {
+            _session.value = session
+        }
+
+        override fun leaveSession() {
+            _session.value = null
+        }
     }
 }
