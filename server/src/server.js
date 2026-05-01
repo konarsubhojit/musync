@@ -20,18 +20,22 @@ const { createRoomStore } = require('./roomStore');
  */
 
 /**
- * @typedef {object} RoomState
- * @property {boolean} isPlaying   - Whether the room is currently playing.
- * @property {number}  positionMs  - Last known playback position in milliseconds.
- * @property {number}  updatedAt   - Wall-clock timestamp (ms) when state was last updated.
+ * @typedef {import('./roomStore').RoomData} RoomData
  */
 
 /**
  * Builds the Express + Socket.IO stack.
  *
+ * @param {object}  [options]
+ * @param {ReturnType<import('./roomStore').createRoomStore>} [options.roomStore]
+ *   Optional room store override — pass a custom store in tests or
+ *   leave unset to auto-select Redis (when env vars are present) or
+ *   the in-memory fallback.
  * @returns {AppBundle}
  */
-function createApp() {
+function createApp(options = {}) {
+  const roomStore = options.roomStore ?? createRoomStore();
+
   const app = express();
 
   // ── Health check ──────────────────────────────────────────────────────────
@@ -49,13 +53,6 @@ function createApp() {
   });
 
   /**
-   * In-memory room state, scoped to this app instance to prevent cross-test
-   * or cross-server state leakage. Keyed by roomId.
-   * @type {Map<string, RoomState>}
-   */
-  const roomStates = new Map();
-
-  /**
    * Returns `pos` when it is a finite, non-negative number; otherwise `null`.
    * @param {unknown} pos
    * @returns {number|null}
@@ -65,24 +62,37 @@ function createApp() {
   }
 
   /**
-   * Persists the given state delta for a room and returns the updated state.
-   * Only called when the socket has already verified membership in `roomId`.
+   * Persists the given playback state delta for a room and returns the updated
+   * RoomData.  Only called when the socket has already verified membership.
    *
+   * The `socketId` is stored as `hostId` the first time state is created for a
+   * room (i.e. the first socket to trigger a PLAY/PAUSE/SEEK becomes the host).
+   *
+   * @param {string}  socketId
    * @param {string}  roomId
    * @param {boolean} isPlaying
    * @param {number}  positionMs
-   * @returns {RoomState}
+   * @returns {Promise<RoomData>}
    */
-  function updateRoomState(roomId, isPlaying, positionMs) {
-    const state = { isPlaying, positionMs, updatedAt: Date.now() };
-    roomStates.set(roomId, state);
-    return state;
+  async function updateRoomState(socketId, roomId, isPlaying, positionMs) {
+    const existing = await roomStore.getRoom(roomId);
+    const roomData = {
+      roomId,
+      hostId: existing?.hostId ?? socketId,
+      playbackState: isPlaying ? 'PLAYING' : 'PAUSED',
+      isPlaying,
+      positionMs,
+      currentVideo: existing?.currentVideo ?? null,
+      queue: existing?.queue ?? [],
+      updatedAt: Date.now(),
+    };
+    await roomStore.setRoom(roomId, roomData);
+    return roomData;
   }
 
   /**
-   * Removes the room state entry if the room will have no remaining members
-   * after `leavingSocketId` departs.  Pass `null` when the socket has already
-   * left (e.g. after `socket.leave()`).
+   * Deletes room state when the room will have no remaining members after
+   * `leavingSocketId` departs.  Pass `null` when the socket has already left.
    *
    * This is intentionally fire-and-forget from the event handlers that call it.
    * The worst case of the inherent async race (a new joiner arrives between the
@@ -99,7 +109,7 @@ function createApp() {
       ? sockets.filter((s) => s.id !== leavingSocketId)
       : sockets;
     if (remaining.length === 0) {
-      roomStates.delete(roomId);
+      await roomStore.deleteRoom(roomId);
     }
   }
 
@@ -108,7 +118,7 @@ function createApp() {
     console.log(`[socket] connected  id=${socket.id}`);
 
     // ── join_room ──────────────────────────────────────────────────────────
-    socket.on('join_room', (roomId, ack) => {
+    socket.on('join_room', async (roomId, ack) => {
       if (typeof roomId !== 'string' || roomId.trim() === '') {
         if (typeof ack === 'function') ack({ error: 'invalid roomId' });
         return;
@@ -117,7 +127,8 @@ function createApp() {
       console.log(`[socket] joined     id=${socket.id}  room=${roomId}`);
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
       if (typeof ack === 'function') {
-        ack({ ok: true, state: roomStates.get(roomId) ?? null });
+        const roomData = await roomStore.getRoom(roomId);
+        ack({ ok: true, state: roomData ?? null });
       }
     });
 
@@ -146,12 +157,24 @@ function createApp() {
     });
 
     // ── QUEUE_UPDATED ──────────────────────────────────────────────────────
-    // Relays the updated track queue to every other member of the room.
-    // Expected payload: { roomId: string, queue: Track[] }
-    socket.on('QUEUE_UPDATED', (payload) => {
+    // Relays the updated track queue to every other member of the room and
+    // persists it in the room store so late joiners receive the full queue.
+    // Expected payload: { roomId: string, queue: VideoRef[] }
+    socket.on('QUEUE_UPDATED', async (payload) => {
       const { roomId, queue } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') {
         return;
+      }
+      // Persist the queue (and derive currentVideo as first item).
+      const existing = await roomStore.getRoom(roomId);
+      if (existing && Array.isArray(queue)) {
+        const normalized = queue.map(({ id, title }) => ({ id, title }));
+        await roomStore.setRoom(roomId, {
+          ...existing,
+          queue: normalized,
+          currentVideo: normalized[0] ?? existing.currentVideo ?? null,
+          updatedAt: Date.now(),
+        });
       }
       socket.to(roomId).emit('QUEUE_UPDATED', queue);
     });
@@ -159,33 +182,33 @@ function createApp() {
     // ── PLAY ───────────────────────────────────────────────────────────────
     // Tells every other room member to start playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
-    socket.on('PLAY', (payload) => {
+    socket.on('PLAY', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
-      const state = updateRoomState(roomId, true, pos);
-      socket.to(roomId).emit('PLAY', { positionMs: state.positionMs });
+      const roomData = await updateRoomState(socket.id, roomId, true, pos);
+      socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
     });
 
     // ── PAUSE ──────────────────────────────────────────────────────────────
     // Tells every other room member to pause playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
-    socket.on('PAUSE', (payload) => {
+    socket.on('PAUSE', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
-      const state = updateRoomState(roomId, false, pos);
-      socket.to(roomId).emit('PAUSE', { positionMs: state.positionMs });
+      const roomData = await updateRoomState(socket.id, roomId, false, pos);
+      socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
     });
 
     // ── SEEK ───────────────────────────────────────────────────────────────
     // Tells every other room member to seek to the given position.
     // Expected payload: { roomId: string, positionMs: number }
-    socket.on('SEEK', (payload) => {
+    socket.on('SEEK', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
@@ -193,9 +216,10 @@ function createApp() {
       if (pos === null) return;
       // Preserve the current isPlaying flag; default to false (paused) when
       // no prior PLAY/PAUSE event has established room state yet.
-      const isPlaying = roomStates.get(roomId)?.isPlaying ?? false;
-      const state = updateRoomState(roomId, isPlaying, pos);
-      socket.to(roomId).emit('SEEK', { positionMs: state.positionMs });
+      const existing = await roomStore.getRoom(roomId);
+      const isPlaying = existing?.isPlaying ?? false;
+      const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
+      socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
     });
 
     // ── disconnecting ──────────────────────────────────────────────────────
