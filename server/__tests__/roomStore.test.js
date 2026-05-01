@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateRoomData, ROOM_TTL_SECONDS } = require('../src/roomStore');
+const { validateRoomData, isVideoRef, ROOM_TTL_SECONDS } = require('../src/roomStore');
 const { createApp } = require('../src/server');
 const { io: ioc } = require('socket.io-client');
 
@@ -89,15 +89,27 @@ describe('validateRoomData', () => {
     ).toThrow(TypeError);
   });
 
+  it('throws when currentVideo has empty title', () => {
+    expect(() =>
+      validateRoomData({ ...valid, currentVideo: { id: 'v1', title: '' } }),
+    ).toThrow(TypeError);
+  });
+
   it('throws when currentVideo is missing title', () => {
     expect(() =>
       validateRoomData({ ...valid, currentVideo: { id: 'v1' } }),
     ).toThrow(TypeError);
   });
 
-  it('throws when queue contains an invalid item', () => {
+  it('throws when queue contains an item with empty id', () => {
     expect(() =>
       validateRoomData({ ...valid, queue: [{ id: '', title: 'Song' }] }),
+    ).toThrow(TypeError);
+  });
+
+  it('throws when queue contains an item with empty title', () => {
+    expect(() =>
+      validateRoomData({ ...valid, queue: [{ id: 'v1', title: '' }] }),
     ).toThrow(TypeError);
   });
 
@@ -111,6 +123,30 @@ describe('validateRoomData', () => {
 describe('ROOM_TTL_SECONDS', () => {
   it('is 14400 seconds (4 hours)', () => {
     expect(ROOM_TTL_SECONDS).toBe(14400);
+  });
+});
+
+// ── isVideoRef ────────────────────────────────────────────────────────────────
+
+describe('isVideoRef', () => {
+  it('returns true for a valid VideoRef', () => {
+    expect(isVideoRef({ id: 'v1', title: 'Song' })).toBe(true);
+  });
+
+  it('returns false for null', () => {
+    expect(isVideoRef(null)).toBe(false);
+  });
+
+  it('returns false when id is empty', () => {
+    expect(isVideoRef({ id: '', title: 'Song' })).toBe(false);
+  });
+
+  it('returns false when title is empty', () => {
+    expect(isVideoRef({ id: 'v1', title: '' })).toBe(false);
+  });
+
+  it('returns false when id is missing', () => {
+    expect(isVideoRef({ title: 'Song' })).toBe(false);
   });
 });
 
@@ -234,6 +270,57 @@ describe('Redis schema fields', () => {
     expect(ack.state.queue).toEqual(tracks);
     // currentVideo is derived from the first item in the queue
     expect(ack.state.currentVideo).toEqual({ id: 'v1', title: 'Track 1' });
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  it('QUEUE_UPDATED before any PLAY/PAUSE bootstraps PAUSED room state', async () => {
+    const alice = await connect();
+    await joinRoom(alice, 'schema-queue-bootstrap');
+
+    const tracks = [{ id: 'v1', title: 'Track 1' }];
+    alice.emit('QUEUE_UPDATED', { roomId: 'schema-queue-bootstrap', queue: tracks });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const bob = await connect();
+    const ack = await joinRoom(bob, 'schema-queue-bootstrap');
+
+    expect(ack.state).toMatchObject({
+      playbackState: 'PAUSED',
+      isPlaying: false,
+      positionMs: 0,
+      queue: tracks,
+      currentVideo: { id: 'v1', title: 'Track 1' },
+    });
+
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  it('clearing the queue via QUEUE_UPDATED resets currentVideo to null', async () => {
+    const alice = await connect();
+    await joinRoom(alice, 'schema-queue-clear');
+
+    alice.emit('PLAY', { roomId: 'schema-queue-clear', positionMs: 0 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // First populate the queue
+    alice.emit('QUEUE_UPDATED', {
+      roomId: 'schema-queue-clear',
+      queue: [{ id: 'v1', title: 'Track 1' }],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Then clear it
+    alice.emit('QUEUE_UPDATED', { roomId: 'schema-queue-clear', queue: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const bob = await connect();
+    const ack = await joinRoom(bob, 'schema-queue-clear');
+
+    expect(ack.state.queue).toEqual([]);
+    expect(ack.state.currentVideo).toBeNull();
 
     alice.disconnect();
     bob.disconnect();

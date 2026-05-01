@@ -34,7 +34,7 @@ function isVideoRef(v) {
     v !== null &&
     typeof v === 'object' &&
     typeof v.id === 'string' && v.id.trim() !== '' &&
-    typeof v.title === 'string'
+    typeof v.title === 'string' && v.title.trim() !== ''
   );
 }
 
@@ -158,4 +158,4 @@ function createRoomStore() {
   };
 }
 
-module.exports = { createRoomStore, validateRoomData, ROOM_TTL_SECONDS };
+module.exports = { createRoomStore, validateRoomData, isVideoRef, ROOM_TTL_SECONDS };

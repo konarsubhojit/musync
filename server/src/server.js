@@ -10,7 +10,7 @@
 const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-const { createRoomStore } = require('./roomStore');
+const { createRoomStore, isVideoRef } = require('./roomStore');
 
 /**
  * @typedef {object} AppBundle
@@ -165,14 +165,27 @@ function createApp(options = {}) {
       if (typeof roomId !== 'string' || roomId.trim() === '') {
         return;
       }
-      // Persist the queue (and derive currentVideo as first item).
-      const existing = await roomStore.getRoom(roomId);
-      if (existing && Array.isArray(queue)) {
-        const normalized = queue.map(({ id, title }) => ({ id, title }));
+      if (Array.isArray(queue)) {
+        const existing = await roomStore.getRoom(roomId);
+        // Discard items that don't satisfy the VideoRef shape so validation passes.
+        const normalized = queue.filter(isVideoRef).map(({ id, title }) => ({ id, title }));
+        // If no PLAY/PAUSE/SEEK has run yet, bootstrap a PAUSED room state so
+        // the queue is never silently dropped.
+        const base = existing ?? {
+          roomId,
+          hostId: null,
+          playbackState: 'PAUSED',
+          isPlaying: false,
+          positionMs: 0,
+          currentVideo: null,
+          queue: [],
+          updatedAt: Date.now(),
+        };
         await roomStore.setRoom(roomId, {
-          ...existing,
+          ...base,
           queue: normalized,
-          currentVideo: normalized[0] ?? existing.currentVideo ?? null,
+          // Clearing the queue resets currentVideo to null.
+          currentVideo: normalized[0] ?? null,
           updatedAt: Date.now(),
         });
       }
