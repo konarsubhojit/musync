@@ -102,7 +102,7 @@ class PlayerViewModel
                             // Honour the host-supplied videoId; otherwise fall back
                             // to whatever the repository says is current.
                             videoId = initialVideoId ?: (track?.youtubeVideoId ?: ""),
-                            trackTitle = track?.title ?: state.trackTitle,
+                            trackTitle = track?.title ?: "",
                         )
                     }
                 }
