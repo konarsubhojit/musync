@@ -171,4 +171,345 @@ describe('MuSync server', () => {
       bob.disconnect();
     });
   });
+
+  // ── PLAY ──────────────────────────────────────────────────────────────────
+  describe('PLAY', () => {
+    it('relays PLAY to other room members without roomId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-play');
+      await joinRoom(bob, 'room-play');
+
+      const playReceived = once(bob, 'PLAY');
+      alice.emit('PLAY', { roomId: 'room-play', positionMs: 5000 });
+
+      const payload = await playReceived;
+      expect(payload).toMatchObject({ positionMs: 5000 });
+      expect(payload.roomId).toBeUndefined();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo PLAY back to the sender', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-play-echo');
+
+      let echoed = false;
+      alice.on('PLAY', () => { echoed = true; });
+      alice.emit('PLAY', { roomId: 'room-play-echo', positionMs: 0 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(echoed).toBe(false);
+
+      alice.disconnect();
+    });
+
+    it('updates room state so late joiners receive isPlaying=true', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-play-state');
+      alice.emit('PLAY', { roomId: 'room-play-state', positionMs: 3000 });
+
+      // Give the server time to process the event before bob joins
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-play-state');
+
+      expect(ack.state).toMatchObject({ isPlaying: true, positionMs: 3000 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── PAUSE ─────────────────────────────────────────────────────────────────
+  describe('PAUSE', () => {
+    it('relays PAUSE to other room members without roomId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-pause');
+      await joinRoom(bob, 'room-pause');
+
+      const pauseReceived = once(bob, 'PAUSE');
+      alice.emit('PAUSE', { roomId: 'room-pause', positionMs: 7500 });
+
+      const payload = await pauseReceived;
+      expect(payload).toMatchObject({ positionMs: 7500 });
+      expect(payload.roomId).toBeUndefined();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo PAUSE back to the sender', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-pause-echo');
+
+      let echoed = false;
+      alice.on('PAUSE', () => { echoed = true; });
+      alice.emit('PAUSE', { roomId: 'room-pause-echo', positionMs: 0 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(echoed).toBe(false);
+
+      alice.disconnect();
+    });
+
+    it('updates room state so late joiners receive isPlaying=false', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-pause-state');
+      // First play, then pause
+      alice.emit('PLAY', { roomId: 'room-pause-state', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 30));
+      alice.emit('PAUSE', { roomId: 'room-pause-state', positionMs: 2000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-pause-state');
+
+      expect(ack.state).toMatchObject({ isPlaying: false, positionMs: 2000 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── SEEK ──────────────────────────────────────────────────────────────────
+  describe('SEEK', () => {
+    it('relays SEEK to other room members without roomId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-seek');
+      await joinRoom(bob, 'room-seek');
+
+      const seekReceived = once(bob, 'SEEK');
+      alice.emit('SEEK', { roomId: 'room-seek', positionMs: 12000 });
+
+      const payload = await seekReceived;
+      expect(payload).toMatchObject({ positionMs: 12000 });
+      expect(payload.roomId).toBeUndefined();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo SEEK back to the sender', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-seek-echo');
+
+      let echoed = false;
+      alice.on('SEEK', () => { echoed = true; });
+      alice.emit('SEEK', { roomId: 'room-seek-echo', positionMs: 0 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(echoed).toBe(false);
+
+      alice.disconnect();
+    });
+
+    it('updates room state positionMs while preserving isPlaying', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-seek-state');
+      alice.emit('PLAY', { roomId: 'room-seek-state', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 30));
+      alice.emit('SEEK', { roomId: 'room-seek-state', positionMs: 45000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-seek-state');
+
+      expect(ack.state).toMatchObject({ isPlaying: true, positionMs: 45000 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── join_room state ───────────────────────────────────────────────────────
+  describe('join_room state', () => {
+    it('returns null state for a brand-new room', async () => {
+      const alice = await connect();
+      const ack = await joinRoom(alice, 'room-new-state');
+
+      expect(ack.state).toBeNull();
+
+      alice.disconnect();
+    });
+  });
+
+  // ── positionMs validation ─────────────────────────────────────────────────
+  describe('positionMs validation', () => {
+    it.each([
+      ['missing (undefined)', undefined],
+      ['NaN', NaN],
+      ['Infinity', Infinity],
+      ['negative', -1],
+      ['string', '5000'],
+    ])('ignores PLAY with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-play');
+      await joinRoom(bob, 'room-valid-play');
+
+      let received = false;
+      bob.on('PLAY', () => { received = true; });
+      alice.emit('PLAY', { roomId: 'room-valid-play', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it.each([
+      ['missing (undefined)', undefined],
+      ['negative', -100],
+    ])('ignores PAUSE with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-pause');
+      await joinRoom(bob, 'room-valid-pause');
+
+      let received = false;
+      bob.on('PAUSE', () => { received = true; });
+      alice.emit('PAUSE', { roomId: 'room-valid-pause', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it.each([
+      ['missing (undefined)', undefined],
+      ['negative', -500],
+    ])('ignores SEEK with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-seek');
+      await joinRoom(bob, 'room-valid-seek');
+
+      let received = false;
+      bob.on('SEEK', () => { received = true; });
+      alice.emit('SEEK', { roomId: 'room-valid-seek', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── membership check ──────────────────────────────────────────────────────
+  describe('membership check', () => {
+    it('does not broadcast PLAY from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-play');
+      // intruder intentionally does NOT join the room
+
+      let received = false;
+      alice.on('PLAY', () => { received = true; });
+      intruder.emit('PLAY', { roomId: 'room-member-play', positionMs: 1000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('does not broadcast PAUSE from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-pause');
+
+      let received = false;
+      alice.on('PAUSE', () => { received = true; });
+      intruder.emit('PAUSE', { roomId: 'room-member-pause', positionMs: 2000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('does not broadcast SEEK from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-seek');
+
+      let received = false;
+      alice.on('SEEK', () => { received = true; });
+      intruder.emit('SEEK', { roomId: 'room-member-seek', positionMs: 3000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── room state cleanup ────────────────────────────────────────────────────
+  describe('room state cleanup', () => {
+    it('clears state when last member leaves via leave_room', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-cleanup-leave');
+      alice.emit('PLAY', { roomId: 'room-cleanup-leave', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      await leaveRoom(alice, 'room-cleanup-leave');
+      await new Promise((r) => setTimeout(r, 50));
+
+      // A fresh joiner should see null state
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-cleanup-leave');
+      expect(ack.state).toBeNull();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('clears state when last member disconnects', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-cleanup-disconnect');
+      alice.emit('PLAY', { roomId: 'room-cleanup-disconnect', positionMs: 2000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.disconnect();
+      await new Promise((r) => setTimeout(r, 100));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-cleanup-disconnect');
+      expect(ack.state).toBeNull();
+
+      bob.disconnect();
+    });
+
+    it('preserves state while at least one member remains', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-cleanup-partial');
+      await joinRoom(bob, 'room-cleanup-partial');
+      alice.emit('PLAY', { roomId: 'room-cleanup-partial', positionMs: 5000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Alice leaves but Bob remains
+      await leaveRoom(alice, 'room-cleanup-partial');
+      await new Promise((r) => setTimeout(r, 50));
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-cleanup-partial');
+      expect(ack.state).toMatchObject({ isPlaying: true, positionMs: 5000 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+  });
 });
