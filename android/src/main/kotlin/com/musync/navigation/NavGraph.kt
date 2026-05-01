@@ -34,16 +34,18 @@ fun MuSyncNavGraph(
         }
         composable(
             route = Screen.Player.route,
-            arguments = listOf(
-                navArgument("roomId") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-            deepLinks = listOf(
-                navDeepLink { uriPattern = "https://listen.yourdomain.com/room/{roomId}" },
-            ),
+            arguments =
+                listOf(
+                    navArgument("roomId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            deepLinks =
+                listOf(
+                    navDeepLink { uriPattern = "https://listen.yourdomain.com/room/{roomId}" },
+                ),
         ) {
             PlayerScreen()
         }
