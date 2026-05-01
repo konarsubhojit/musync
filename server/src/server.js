@@ -26,12 +26,6 @@ const { Server } = require('socket.io');
  */
 
 /**
- * In-memory room state.  Keyed by roomId.
- * @type {Map<string, RoomState>}
- */
-const roomStates = new Map();
-
-/**
  * Builds the Express + Socket.IO stack.
  *
  * @returns {AppBundle}
@@ -52,6 +46,61 @@ function createApp() {
       methods: ['GET', 'POST'],
     },
   });
+
+  /**
+   * In-memory room state, scoped to this app instance to prevent cross-test
+   * or cross-server state leakage. Keyed by roomId.
+   * @type {Map<string, RoomState>}
+   */
+  const roomStates = new Map();
+
+  /**
+   * Returns `pos` when it is a finite, non-negative number; otherwise `null`.
+   * @param {unknown} pos
+   * @returns {number|null}
+   */
+  function validPositionMs(pos) {
+    return typeof pos === 'number' && Number.isFinite(pos) && pos >= 0 ? pos : null;
+  }
+
+  /**
+   * Persists the given state delta for a room and returns the updated state.
+   * Only called when the socket has already verified membership in `roomId`.
+   *
+   * @param {string}  roomId
+   * @param {boolean} isPlaying
+   * @param {number}  positionMs
+   * @returns {RoomState}
+   */
+  function updateRoomState(roomId, isPlaying, positionMs) {
+    const state = { isPlaying, positionMs, updatedAt: Date.now() };
+    roomStates.set(roomId, state);
+    return state;
+  }
+
+  /**
+   * Removes the room state entry if the room will have no remaining members
+   * after `leavingSocketId` departs.  Pass `null` when the socket has already
+   * left (e.g. after `socket.leave()`).
+   *
+   * This is intentionally fire-and-forget from the event handlers that call it.
+   * The worst case of the inherent async race (a new joiner arrives between the
+   * fetchSockets call and the delete) is that state is spuriously cleared for a
+   * brief moment; the joining client always receives current state in the
+   * join_room ack, so it can recover immediately.
+   *
+   * @param {string}      roomId
+   * @param {string|null} leavingSocketId
+   */
+  async function cleanupRoomState(roomId, leavingSocketId = null) {
+    const sockets = await io.in(roomId).fetchSockets();
+    const remaining = leavingSocketId
+      ? sockets.filter((s) => s.id !== leavingSocketId)
+      : sockets;
+    if (remaining.length === 0) {
+      roomStates.delete(roomId);
+    }
+  }
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
@@ -81,6 +130,7 @@ function createApp() {
       console.log(`[socket] left       id=${socket.id}  room=${roomId}`);
       socket.to(roomId).emit('peer_left', { socketId: socket.id });
       if (typeof ack === 'function') ack({ ok: true });
+      cleanupRoomState(roomId);
     });
 
     // ── SYNC_HEARTBEAT ─────────────────────────────────────────────────────
@@ -110,11 +160,11 @@ function createApp() {
     // Expected payload: { roomId: string, positionMs: number }
     socket.on('PLAY', (payload) => {
       const { roomId, positionMs } = payload ?? {};
-      if (typeof roomId !== 'string' || roomId.trim() === '') {
-        return;
-      }
-      const state = { isPlaying: true, positionMs: positionMs ?? 0, updatedAt: Date.now() };
-      roomStates.set(roomId, state);
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const pos = validPositionMs(positionMs);
+      if (pos === null) return;
+      const state = updateRoomState(roomId, true, pos);
       socket.to(roomId).emit('PLAY', { positionMs: state.positionMs });
     });
 
@@ -123,11 +173,11 @@ function createApp() {
     // Expected payload: { roomId: string, positionMs: number }
     socket.on('PAUSE', (payload) => {
       const { roomId, positionMs } = payload ?? {};
-      if (typeof roomId !== 'string' || roomId.trim() === '') {
-        return;
-      }
-      const state = { isPlaying: false, positionMs: positionMs ?? 0, updatedAt: Date.now() };
-      roomStates.set(roomId, state);
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const pos = validPositionMs(positionMs);
+      if (pos === null) return;
+      const state = updateRoomState(roomId, false, pos);
       socket.to(roomId).emit('PAUSE', { positionMs: state.positionMs });
     });
 
@@ -136,15 +186,27 @@ function createApp() {
     // Expected payload: { roomId: string, positionMs: number }
     socket.on('SEEK', (payload) => {
       const { roomId, positionMs } = payload ?? {};
-      if (typeof roomId !== 'string' || roomId.trim() === '') {
-        return;
-      }
-      const existing = roomStates.get(roomId);
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const pos = validPositionMs(positionMs);
+      if (pos === null) return;
       // Preserve the current isPlaying flag; default to false (paused) when
       // no prior PLAY/PAUSE event has established room state yet.
-      const state = { isPlaying: existing?.isPlaying ?? false, positionMs: positionMs ?? 0, updatedAt: Date.now() };
-      roomStates.set(roomId, state);
+      const isPlaying = roomStates.get(roomId)?.isPlaying ?? false;
+      const state = updateRoomState(roomId, isPlaying, pos);
       socket.to(roomId).emit('SEEK', { positionMs: state.positionMs });
+    });
+
+    // ── disconnecting ──────────────────────────────────────────────────────
+    // Fires while the socket is still a member of its rooms, so we can
+    // clean up state for any room that becomes empty as a result.
+    socket.on('disconnecting', () => {
+      for (const roomId of socket.rooms) {
+        // Skip the socket's own personal room (its ID).
+        if (roomId === socket.id) continue;
+        // Pass socket.id so it is excluded when checking remaining members.
+        cleanupRoomState(roomId, socket.id);
+      }
     });
 
     // ── disconnect ─────────────────────────────────────────────────────────

@@ -337,4 +337,179 @@ describe('MuSync server', () => {
       alice.disconnect();
     });
   });
+
+  // ── positionMs validation ─────────────────────────────────────────────────
+  describe('positionMs validation', () => {
+    it.each([
+      ['missing (undefined)', undefined],
+      ['NaN', NaN],
+      ['Infinity', Infinity],
+      ['negative', -1],
+      ['string', '5000'],
+    ])('ignores PLAY with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-play');
+      await joinRoom(bob, 'room-valid-play');
+
+      let received = false;
+      bob.on('PLAY', () => { received = true; });
+      alice.emit('PLAY', { roomId: 'room-valid-play', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it.each([
+      ['missing (undefined)', undefined],
+      ['negative', -100],
+    ])('ignores PAUSE with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-pause');
+      await joinRoom(bob, 'room-valid-pause');
+
+      let received = false;
+      bob.on('PAUSE', () => { received = true; });
+      alice.emit('PAUSE', { roomId: 'room-valid-pause', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it.each([
+      ['missing (undefined)', undefined],
+      ['negative', -500],
+    ])('ignores SEEK with %s positionMs', async (_label, badPos) => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-valid-seek');
+      await joinRoom(bob, 'room-valid-seek');
+
+      let received = false;
+      bob.on('SEEK', () => { received = true; });
+      alice.emit('SEEK', { roomId: 'room-valid-seek', positionMs: badPos });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── membership check ──────────────────────────────────────────────────────
+  describe('membership check', () => {
+    it('does not broadcast PLAY from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-play');
+      // intruder intentionally does NOT join the room
+
+      let received = false;
+      alice.on('PLAY', () => { received = true; });
+      intruder.emit('PLAY', { roomId: 'room-member-play', positionMs: 1000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('does not broadcast PAUSE from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-pause');
+
+      let received = false;
+      alice.on('PAUSE', () => { received = true; });
+      intruder.emit('PAUSE', { roomId: 'room-member-pause', positionMs: 2000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('does not broadcast SEEK from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-member-seek');
+
+      let received = false;
+      alice.on('SEEK', () => { received = true; });
+      intruder.emit('SEEK', { roomId: 'room-member-seek', positionMs: 3000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── room state cleanup ────────────────────────────────────────────────────
+  describe('room state cleanup', () => {
+    it('clears state when last member leaves via leave_room', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-cleanup-leave');
+      alice.emit('PLAY', { roomId: 'room-cleanup-leave', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      await leaveRoom(alice, 'room-cleanup-leave');
+      await new Promise((r) => setTimeout(r, 50));
+
+      // A fresh joiner should see null state
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-cleanup-leave');
+      expect(ack.state).toBeNull();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('clears state when last member disconnects', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-cleanup-disconnect');
+      alice.emit('PLAY', { roomId: 'room-cleanup-disconnect', positionMs: 2000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.disconnect();
+      await new Promise((r) => setTimeout(r, 100));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-cleanup-disconnect');
+      expect(ack.state).toBeNull();
+
+      bob.disconnect();
+    });
+
+    it('preserves state while at least one member remains', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-cleanup-partial');
+      await joinRoom(bob, 'room-cleanup-partial');
+      alice.emit('PLAY', { roomId: 'room-cleanup-partial', positionMs: 5000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Alice leaves but Bob remains
+      await leaveRoom(alice, 'room-cleanup-partial');
+      await new Promise((r) => setTimeout(r, 50));
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-cleanup-partial');
+      expect(ack.state).toMatchObject({ isPlaying: true, positionMs: 5000 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+  });
 });
