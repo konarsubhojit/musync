@@ -30,4 +30,8 @@ class MusicRepositoryImpl
         override fun updateQueue(tracks: List<Track>) {
             _queue.value = tracks
         }
+
+        override fun addToQueue(track: Track) {
+            _queue.value = _queue.value + track
+        }
     }

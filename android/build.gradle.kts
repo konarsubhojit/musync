@@ -102,6 +102,9 @@ dependencies {
     // Material
     implementation(libs.material)
 
+    // Image loading (used for YouTube thumbnails on CreateRoomScreen)
+    implementation(libs.coil.compose)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.mockk)

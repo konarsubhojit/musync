@@ -4,4 +4,43 @@
     <string name="share_invite">Share Invite</string>
     <string name="share_invite_link_description">Share invite link</string>
     <string name="invite_link_copied">Invite link copied to clipboard</string>
+
+    <!-- Home screen -->
+    <string name="home_tagline">Listen together, in sync</string>
+    <string name="home_create_room">Create Room</string>
+    <string name="home_join_room">Join Room</string>
+    <string name="home_join_hint">Paste room link or code</string>
+    <string name="home_join_confirm">Join</string>
+    <string name="home_join_invalid">Enter a valid room link or code</string>
+    <string name="home_now_playing">Now Playing</string>
+    <string name="home_up_next">Up Next</string>
+    <string name="home_empty_title">No active room</string>
+    <string name="home_empty_subtitle">Create or join a room to start listening together</string>
+    <string name="home_settings">Settings</string>
+
+    <!-- Create room screen -->
+    <string name="create_room_title">New Room</string>
+    <string name="create_room_url_label">YouTube video link or ID</string>
+    <string name="create_room_paste">Paste</string>
+    <string name="create_room_url_valid">Looks good</string>
+    <string name="create_room_url_invalid">Not a valid YouTube link or ID</string>
+    <string name="create_room_name_label">Your name (optional)</string>
+    <string name="create_room_default_name_prefix">Listener</string>
+    <string name="create_room_start">Start Room</string>
+    <string name="create_room_back">Back</string>
+
+    <!-- Player screen -->
+    <string name="player_back">Back</string>
+    <string name="player_tab_room">Room</string>
+    <string name="player_tab_queue">Queue</string>
+    <string name="player_invite_card_title">Invite friends</string>
+    <string name="player_copy_link">Copy link</string>
+    <string name="player_participants_title">Listeners</string>
+    <string name="player_participant_you">You</string>
+    <string name="player_participant_count">%1$d listening</string>
+    <string name="player_queue_empty">Queue is empty. Tap + to add a track.</string>
+    <string name="player_add_to_queue">Add to queue</string>
+    <string name="player_add_queue_label">Add YouTube link</string>
+    <string name="player_add_queue_confirm">Add</string>
 </resources>
+
