@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme -->
+    <style name="Theme.MuSync" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/musync_primary</item>
+        <item name="colorPrimaryVariant">@color/musync_primary_variant</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorSecondary">@color/musync_secondary</item>
+        <item name="colorOnSecondary">@android:color/white</item>
+        <item name="android:statusBarColor">@color/musync_primary</item>
+        <item name="android:windowBackground">@color/musync_background</item>
+    </style>
+</resources>
