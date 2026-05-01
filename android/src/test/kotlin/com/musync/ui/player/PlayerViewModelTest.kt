@@ -173,6 +173,8 @@ class PlayerViewModelTest {
         override val currentTrack: Flow<Track?> = trackFlow
 
         override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+
+        override fun updateQueue(tracks: List<Track>) = Unit
     }
 
     private class FakeSessionRepository : SessionRepository {
