@@ -39,3 +39,6 @@ lint/tmp/
 
 # Gradle wrapper (keep wrapper JAR)
 !gradle/wrapper/gradle-wrapper.jar
+
+# Node.js server
+server/node_modules/
