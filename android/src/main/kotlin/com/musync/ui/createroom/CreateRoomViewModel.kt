@@ -1,6 +1,7 @@
 package com.musync.ui.createroom
 
 import androidx.lifecycle.ViewModel
+import com.musync.logging.AppLogger
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,11 +53,16 @@ class CreateRoomViewModel
          */
         fun onStartRoom() {
             val current = _uiState.value
-            if (current.videoId == null) return
+            if (current.videoId == null) {
+                AppLogger.w(TAG, "Start room ignored: no valid YouTube ID parsed.")
+                return
+            }
+            val sessionId = UUID.randomUUID().toString()
+            AppLogger.i(TAG, "Starting room $sessionId for video ${current.videoId}")
             _uiState.update {
                 it.copy(
                     started = true,
-                    sessionId = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
                 )
             }
         }
@@ -67,4 +73,8 @@ class CreateRoomViewModel
         }
 
         private fun generateDefaultName(): String = "Listener #${Random.nextInt(100, 1000)}"
+
+        private companion object {
+            const val TAG = "CreateRoomViewModel"
+        }
     }

@@ -42,5 +42,13 @@
     <string name="player_add_to_queue">Add to queue</string>
     <string name="player_add_queue_label">Add YouTube link</string>
     <string name="player_add_queue_confirm">Add</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_export_logs_title">Export logs</string>
+    <string name="settings_export_logs_description">Save the app\'s error logs to a folder on this device. Useful for sharing diagnostics when something goes wrong.</string>
+    <string name="settings_export_logs_button">Choose folder &amp; export</string>
+    <string name="settings_export_logs_in_progress">Exporting…</string>
 </resources>
 
