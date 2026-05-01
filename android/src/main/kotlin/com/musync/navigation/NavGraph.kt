@@ -6,9 +6,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.musync.ui.home.HomeScreen
+import com.musync.ui.player.PlayerScreen
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
+    data object Player : Screen("player")
 }
 
 @Composable
@@ -21,7 +23,10 @@ fun MuSyncNavGraph(
         startDestination = startDestination
     ) {
         composable(Screen.Home.route) {
-            HomeScreen()
+            HomeScreen(onNavigateToPlayer = { navController.navigate(Screen.Player.route) })
+        }
+        composable(Screen.Player.route) {
+            PlayerScreen()
         }
     }
 }
