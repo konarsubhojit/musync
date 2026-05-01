@@ -100,16 +100,27 @@ function createApp(options = {}) {
    * brief moment; the joining client always receives current state in the
    * join_room ack, so it can recover immediately.
    *
+   * NOTE: `updateRoomState` and the queue handler use a read-then-write pattern
+   * (getRoom → setRoom) that is not atomic.  Concurrent events from different
+   * sockets in the same room could overwrite each other's changes.  For the
+   * current single-server deployment this race is extremely unlikely and the
+   * original in-memory Map had the same behaviour.  A future improvement can
+   * replace these with Redis Lua scripts or WATCH/MULTI/EXEC transactions.
+   *
    * @param {string}      roomId
    * @param {string|null} leavingSocketId
    */
   async function cleanupRoomState(roomId, leavingSocketId = null) {
-    const sockets = await io.in(roomId).fetchSockets();
-    const remaining = leavingSocketId
-      ? sockets.filter((s) => s.id !== leavingSocketId)
-      : sockets;
-    if (remaining.length === 0) {
-      await roomStore.deleteRoom(roomId);
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      const remaining = leavingSocketId
+        ? sockets.filter((s) => s.id !== leavingSocketId)
+        : sockets;
+      if (remaining.length === 0) {
+        await roomStore.deleteRoom(roomId);
+      }
+    } catch (err) {
+      console.error(`[roomStore] cleanupRoomState failed for room=${roomId}:`, err);
     }
   }
 
