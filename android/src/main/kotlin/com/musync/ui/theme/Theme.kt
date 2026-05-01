@@ -1,7 +1,6 @@
 package com.musync.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -25,14 +24,23 @@ private val DarkColorScheme =
 
 private val LightColorScheme =
     lightColorScheme(
-        primary = Purple40,
+        primary = MuSyncPrimary,
         secondary = PurpleGrey40,
         tertiary = Pink40,
+        background = MuSyncBackground,
+        surface = MuSyncSurface,
+        onPrimary = MuSyncOnPrimary,
+        onBackground = MuSyncOnBackground,
+        onSurface = MuSyncOnSurface,
+        error = MuSyncError,
     )
 
 @Composable
 fun MuSyncTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    // MuSync uses a branded dark palette by default to ensure the
+    // Spotify-style green / dark-grey identity is present regardless of
+    // the system theme.
+    darkTheme: Boolean = true,
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,

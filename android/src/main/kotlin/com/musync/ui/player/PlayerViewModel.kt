@@ -4,8 +4,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.data.model.Session
+import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -39,6 +41,15 @@ class PlayerViewModel
 
             /** Duration (ms) to show the "link copied" feedback in the UI. */
             internal const val INVITE_COPIED_FEEDBACK_DURATION_MS = 2_000L
+
+            /** Duration (ms) before the playback overlay controls auto-hide after a tap. */
+            internal const val CONTROLS_AUTO_HIDE_MS = 3_000L
+
+            /** SavedStateHandle key for the initial videoId provided when a host creates a room. */
+            internal const val ARG_VIDEO_ID = "videoId"
+
+            /** SavedStateHandle key for the room ID provided via deep link. */
+            internal const val ARG_ROOM_ID = "roomId"
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -47,8 +58,19 @@ class PlayerViewModel
         /** Tracks the active "reset inviteLinkCopied" job so rapid taps cancel the previous timer. */
         private var inviteCopiedResetJob: Job? = null
 
+        /** Tracks the active "auto-hide controls" job so each interaction restarts the timer. */
+        private var controlsAutoHideJob: Job? = null
+
+        /**
+         * The host-supplied video ID, if any.  When present, this overrides the
+         * track served by [MusicRepository.currentTrack] so the user can play
+         * the specific YouTube video they entered when creating the room.
+         */
+        private val initialVideoId: String? =
+            savedStateHandle.get<String>(ARG_VIDEO_ID)?.takeIf { it.isNotBlank() }
+
         init {
-            val roomId = savedStateHandle.get<String>("roomId")?.takeIf { it.isNotBlank() }
+            val roomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
 
             if (roomId != null) {
                 // Guest mode: joining a session shared via deep link.
@@ -66,16 +88,35 @@ class PlayerViewModel
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$sessionId") }
             }
 
+            // Seed the videoId immediately when the host supplied one so the
+            // YouTube player can start loading without waiting for the track
+            // flow to emit.
+            if (initialVideoId != null) {
+                _uiState.update { it.copy(videoId = initialVideoId) }
+            }
+
             viewModelScope.launch {
                 musicRepository.currentTrack.collect { track ->
                     _uiState.update { state ->
                         state.copy(
-                            videoId = track?.youtubeVideoId ?: "",
+                            // Honour the host-supplied videoId; otherwise fall back
+                            // to whatever the repository says is current.
+                            videoId = initialVideoId ?: (track?.youtubeVideoId ?: ""),
                             trackTitle = track?.title ?: "",
                         )
                     }
                 }
             }
+
+            viewModelScope.launch {
+                musicRepository.queue.collect { queue ->
+                    _uiState.update { it.copy(queue = queue) }
+                }
+            }
+
+            // Start the initial auto-hide timer so the overlay controls fade
+            // out shortly after the screen appears, mirroring the YouTube app.
+            scheduleControlsHide()
         }
 
         fun onPlaybackStateChanged(
@@ -107,5 +148,89 @@ class PlayerViewModel
                     delay(INVITE_COPIED_FEEDBACK_DURATION_MS)
                     _uiState.update { it.copy(inviteLinkCopied = false) }
                 }
+        }
+
+        /** Switches between the Room and Queue tabs below the video. */
+        fun onTabSelected(tab: PlayerTab) {
+            _uiState.update { it.copy(selectedTab = tab) }
+        }
+
+        /**
+         * Toggles the video-overlay controls.  When showing them, also (re-)starts
+         * the auto-hide timer so the overlay disappears again after a few seconds
+         * of inactivity.
+         */
+        fun onVideoTapped() {
+            val currentlyVisible = _uiState.value.controlsVisible
+            _uiState.update { it.copy(controlsVisible = !currentlyVisible) }
+            if (!currentlyVisible) scheduleControlsHide() else controlsAutoHideJob?.cancel()
+        }
+
+        /** Restarts the auto-hide timer; called whenever the user interacts with the overlay. */
+        fun onControlsInteraction() {
+            if (!_uiState.value.controlsVisible) {
+                _uiState.update { it.copy(controlsVisible = true) }
+            }
+            scheduleControlsHide()
+        }
+
+        private fun scheduleControlsHide() {
+            controlsAutoHideJob?.cancel()
+            controlsAutoHideJob =
+                viewModelScope.launch {
+                    delay(CONTROLS_AUTO_HIDE_MS)
+                    _uiState.update { it.copy(controlsVisible = false) }
+                }
+        }
+
+        /** Opens the "Add to queue" bottom sheet. */
+        fun onAddToQueueClicked() {
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = true,
+                    addToQueueInput = "",
+                    addToQueueError = false,
+                )
+            }
+        }
+
+        /** Dismisses the "Add to queue" bottom sheet. */
+        fun onAddToQueueDismissed() {
+            _uiState.update { it.copy(addToQueueSheetVisible = false) }
+        }
+
+        /** Updates the input field of the bottom sheet. */
+        fun onAddToQueueInputChanged(value: String) {
+            _uiState.update { it.copy(addToQueueInput = value, addToQueueError = false) }
+        }
+
+        /**
+         * Confirms the bottom sheet input — parses the YouTube URL and, if valid,
+         * appends a placeholder track to the local queue via [MusicRepository.addToQueue].
+         * Closes the sheet on success; otherwise sets [PlayerUiState.addToQueueError].
+         */
+        fun onAddToQueueConfirm() {
+            val input = _uiState.value.addToQueueInput
+            val videoId = YouTubeUrlParser.extractVideoId(input)
+            if (videoId == null) {
+                _uiState.update { it.copy(addToQueueError = true) }
+                return
+            }
+            musicRepository.addToQueue(
+                Track(
+                    id = UUID.randomUUID().toString(),
+                    title = videoId,
+                    artist = "YouTube",
+                    youtubeVideoId = videoId,
+                    durationMs = 0L,
+                ),
+            )
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    addToQueueInput = "",
+                    addToQueueError = false,
+                )
+            }
         }
     }

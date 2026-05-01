@@ -1,5 +1,10 @@
 package com.musync.ui.player
 
+import com.musync.data.model.Track
+
+/** Which secondary tab is selected below the video. */
+enum class PlayerTab { Room, Queue }
+
 data class PlayerUiState(
     val videoId: String = "",
     val trackTitle: String = "",
@@ -9,4 +14,23 @@ data class PlayerUiState(
     val isBuffering: Boolean = false,
     val inviteLink: String = "",
     val inviteLinkCopied: Boolean = false,
+    /** Currently selected tab below the video. */
+    val selectedTab: PlayerTab = PlayerTab.Room,
+    /** Whether the floating "controls" overlay is currently visible. */
+    val controlsVisible: Boolean = true,
+    /** Whether the "Add to queue" bottom sheet is visible. */
+    val addToQueueSheetVisible: Boolean = false,
+    /** Current text in the "Add to queue" bottom sheet input. */
+    val addToQueueInput: String = "",
+    /** True when the URL in the add-to-queue input does not parse to a valid YouTube ID. */
+    val addToQueueError: Boolean = false,
+    /**
+     * Static placeholder for the participant count badge — the underlying
+     * presence data is not wired through yet, so we always count just the
+     * local listener.  Reserved as state so it can later be driven by the
+     * signalling server.
+     */
+    val participantCount: Int = 1,
+    /** The list of tracks currently queued. */
+    val queue: List<Track> = emptyList(),
 )

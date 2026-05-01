@@ -149,5 +149,7 @@ class QueueManagerTest {
         override fun updateQueue(tracks: List<Track>) {
             lastQueue = tracks
         }
+
+        override fun addToQueue(track: Track) = Unit
     }
 }
