@@ -19,6 +19,19 @@ const { Server } = require('socket.io');
  */
 
 /**
+ * @typedef {object} RoomState
+ * @property {boolean} isPlaying   - Whether the room is currently playing.
+ * @property {number}  positionMs  - Last known playback position in milliseconds.
+ * @property {number}  updatedAt   - Wall-clock timestamp (ms) when state was last updated.
+ */
+
+/**
+ * In-memory room state.  Keyed by roomId.
+ * @type {Map<string, RoomState>}
+ */
+const roomStates = new Map();
+
+/**
  * Builds the Express + Socket.IO stack.
  *
  * @returns {AppBundle}
@@ -53,7 +66,9 @@ function createApp() {
       socket.join(roomId);
       console.log(`[socket] joined     id=${socket.id}  room=${roomId}`);
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
-      if (typeof ack === 'function') ack({ ok: true });
+      if (typeof ack === 'function') {
+        ack({ ok: true, state: roomStates.get(roomId) ?? null });
+      }
     });
 
     // ── leave_room ─────────────────────────────────────────────────────────
@@ -88,6 +103,48 @@ function createApp() {
         return;
       }
       socket.to(roomId).emit('QUEUE_UPDATED', queue);
+    });
+
+    // ── PLAY ───────────────────────────────────────────────────────────────
+    // Tells every other room member to start playback at the given position.
+    // Expected payload: { roomId: string, positionMs: number }
+    socket.on('PLAY', (payload) => {
+      const { roomId, positionMs } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') {
+        return;
+      }
+      const state = { isPlaying: true, positionMs: positionMs ?? 0, updatedAt: Date.now() };
+      roomStates.set(roomId, state);
+      socket.to(roomId).emit('PLAY', { positionMs: state.positionMs });
+    });
+
+    // ── PAUSE ──────────────────────────────────────────────────────────────
+    // Tells every other room member to pause playback at the given position.
+    // Expected payload: { roomId: string, positionMs: number }
+    socket.on('PAUSE', (payload) => {
+      const { roomId, positionMs } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') {
+        return;
+      }
+      const state = { isPlaying: false, positionMs: positionMs ?? 0, updatedAt: Date.now() };
+      roomStates.set(roomId, state);
+      socket.to(roomId).emit('PAUSE', { positionMs: state.positionMs });
+    });
+
+    // ── SEEK ───────────────────────────────────────────────────────────────
+    // Tells every other room member to seek to the given position.
+    // Expected payload: { roomId: string, positionMs: number }
+    socket.on('SEEK', (payload) => {
+      const { roomId, positionMs } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') {
+        return;
+      }
+      const existing = roomStates.get(roomId);
+      // Preserve the current isPlaying flag; default to false (paused) when
+      // no prior PLAY/PAUSE event has established room state yet.
+      const state = { isPlaying: existing?.isPlaying ?? false, positionMs: positionMs ?? 0, updatedAt: Date.now() };
+      roomStates.set(roomId, state);
+      socket.to(roomId).emit('SEEK', { positionMs: state.positionMs });
     });
 
     // ── disconnect ─────────────────────────────────────────────────────────
