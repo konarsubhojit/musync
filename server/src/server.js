@@ -43,6 +43,89 @@ function createApp(options = {}) {
     res.json({ status: 'ok' });
   });
 
+  // ── Android App Links: assetlinks.json ────────────────────────────────────
+  // Served at the well-known location Android fetches when verifying
+  // `<intent-filter android:autoVerify="true">` links of the form
+  // `https://<host>/room/<id>`.  When this route returns a valid manifest the
+  // OS routes shared invite links straight into the app without a chooser, so
+  // the Socket.IO API and the invite-link host can be the same domain.
+  //
+  // Configuration (env vars):
+  //   ANDROID_APP_PACKAGE_NAME      Application id (default: com.musync)
+  //   ANDROID_APP_SHA256_FINGERPRINTS
+  //                                 Comma-separated list of SHA-256 signing
+  //                                 certificate fingerprints (uppercase hex,
+  //                                 colon-separated).  When unset the route
+  //                                 responds 404 so we never serve an empty
+  //                                 or incorrect manifest.
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    const packageName = process.env.ANDROID_APP_PACKAGE_NAME ?? 'com.musync';
+    const fingerprints = (process.env.ANDROID_APP_SHA256_FINGERPRINTS ?? '')
+      .split(',')
+      .map((fp) => fp.trim())
+      .filter((fp) => fp.length > 0);
+
+    if (fingerprints.length === 0) {
+      res.status(404).json({ error: 'assetlinks not configured' });
+      return;
+    }
+
+    res.json([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: {
+          namespace: 'android_app',
+          package_name: packageName,
+          sha256_cert_fingerprints: fingerprints,
+        },
+      },
+    ]);
+  });
+
+  // ── Invite-link landing page ──────────────────────────────────────────────
+  // The Android app advertises an App Link for `https://<host>/room/<id>`.
+  // When the OS fails to verify the link (assetlinks not yet served, app not
+  // installed, browser navigation, etc.) the URL is fetched over HTTP and the
+  // user lands here.  We return a minimal page that:
+  //   * Validates the roomId looks reasonable
+  //   * Re-attempts the deep link via `<a href>` so installed-app users can
+  //     bounce into the app without re-typing the URL
+  //   * Tells visitors how to get the app otherwise
+  app.get('/room/:roomId', (req, res) => {
+    const { roomId } = req.params;
+    // Mirror the validation used on the socket side: non-empty trimmed string,
+    // restricted to characters that are safe to embed in HTML/URL contexts.
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(roomId)) {
+      res.status(400).type('text/plain').send('Invalid room id');
+      return;
+    }
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MuSync · Join room ${roomId}</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 32rem;
+         margin: 4rem auto; padding: 0 1rem; line-height: 1.5; color: #222; }
+  h1   { margin: 0 0 1rem; font-size: 1.5rem; }
+  code { background: #f4f4f4; padding: 0.1rem 0.4rem; border-radius: 4px; }
+  a.button { display: inline-block; margin-top: 1rem; padding: 0.6rem 1rem;
+             background: #1f6feb; color: white; border-radius: 6px;
+             text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>You're invited to a MuSync room</h1>
+  <p>Room: <code>${roomId}</code></p>
+  <p>If you have the MuSync app installed it should open automatically.
+     If not, tap the button below.</p>
+  <p><a class="button" href="/room/${roomId}">Open in MuSync</a></p>
+</body>
+</html>`;
+    res.type('text/html').send(html);
+  });
+
   const httpServer = createServer(app);
 
   const io = new Server(httpServer, {

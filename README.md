@@ -38,3 +38,25 @@ Configure them under
 
 Use `secrets.*` (and reference them the same way in the workflow) for any
 value that must not be exposed in logs.
+
+### Using the same host for the API and invite links
+
+`SERVER_URL` and `INVITE_LINK_HOST` can point to **the same** Node.js
+deployment.  The server exposes the two routes Android needs for the invite
+flow to work end-to-end:
+
+- `GET /room/:roomId` — minimal HTML landing page rendered when a user opens
+  the invite link in a browser (or before App Links verification kicks in).
+- `GET /.well-known/assetlinks.json` — Android App Links manifest, populated
+  from `ANDROID_APP_PACKAGE_NAME` and `ANDROID_APP_SHA256_FINGERPRINTS`
+  (see `server/.env.example`).  This is what makes `android:autoVerify="true"`
+  succeed so shared links open straight in the app.
+
+For example, with everything served from `https://api.example.com`:
+
+| Variable               | Value                                  |
+| ---------------------- | -------------------------------------- |
+| `SERVER_URL`           | `https://api.example.com`              |
+| `INVITE_LINK_BASE_URL` | `https://api.example.com/room`         |
+| `INVITE_LINK_HOST`     | `api.example.com`                      |
+
