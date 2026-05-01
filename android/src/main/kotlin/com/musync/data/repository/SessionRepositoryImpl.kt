@@ -14,72 +14,72 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class SessionRepositoryImpl @Inject constructor() : SessionRepository {
+class SessionRepositoryImpl
+    @Inject
+    constructor() : SessionRepository {
+        companion object {
+            /**
+             * Buffer capacity for outgoing sync events.
+             *
+             * If collectors fall behind, events will be dropped once this buffer is
+             * full (because [handleTrackEnded] uses [MutableSharedFlow.tryEmit]).
+             * On a failed emission the guard is reverted so the next ENDED callback
+             * can retry rather than permanently suppressing [SyncEvent.PlayNext] for
+             * the current track.
+             */
+            private const val EVENT_BUFFER_CAPACITY = 8
+        }
 
-    companion object {
+        private val _session = MutableStateFlow<Session?>(null)
+        private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
+
         /**
-         * Buffer capacity for outgoing sync events.
-         *
-         * If collectors fall behind, events will be dropped once this buffer is
-         * full (because [handleTrackEnded] uses [MutableSharedFlow.tryEmit]).
-         * On a failed emission the guard is reverted so the next ENDED callback
-         * can retry rather than permanently suppressing [SyncEvent.PlayNext] for
-         * the current track.
+         * Guards against duplicate [SyncEvent.PlayNext] emissions for the same
+         * track.  Set to `true` on the first ENDED callback; reset to `false`
+         * when a new track starts (PLAYING state) or when the session changes.
          */
-        private const val EVENT_BUFFER_CAPACITY = 8
-    }
+        private val playNextEmitted = AtomicBoolean(false)
 
-    private val _session = MutableStateFlow<Session?>(null)
-    private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
+        override val session: StateFlow<Session?> = _session.asStateFlow()
 
-    /**
-     * Guards against duplicate [SyncEvent.PlayNext] emissions for the same
-     * track.  Set to `true` on the first ENDED callback; reset to `false`
-     * when a new track starts (PLAYING state) or when the session changes.
-     */
-    private val playNextEmitted = AtomicBoolean(false)
+        override val events: SharedFlow<SyncEvent> = _events.asSharedFlow()
 
-    override fun getSession(): StateFlow<Session?> = _session.asStateFlow()
-
-    override fun getEvents(): SharedFlow<SyncEvent> = _events.asSharedFlow()
-
-    override fun onPlayerStateChanged(state: PlayerState) {
-        when (state) {
-            PlayerState.ENDED -> handleTrackEnded()
-            PlayerState.PLAYING -> playNextEmitted.set(false)
-            else -> Unit
+        override fun onPlayerStateChanged(state: PlayerState) {
+            when (state) {
+                PlayerState.ENDED -> handleTrackEnded()
+                PlayerState.PLAYING -> playNextEmitted.set(false)
+                else -> Unit
+            }
         }
-    }
 
-    override fun joinSession(session: Session) {
-        playNextEmitted.set(false)
-        _session.value = session
-    }
-
-    override fun leaveSession() {
-        playNextEmitted.set(false)
-        _session.value = null
-    }
-
-    // -----------------------------------------------------------------
-    // Private helpers
-    // -----------------------------------------------------------------
-
-    private fun handleTrackEnded() {
-        val session = _session.value ?: return
-        if (!isLocalUserHost(session)) return
-        // compareAndSet returns true only for the first caller, preventing
-        // duplicate PLAY_NEXT emissions even under concurrent callbacks.
-        if (!playNextEmitted.compareAndSet(false, true)) return
-        val emitted = _events.tryEmit(SyncEvent.PlayNext(session.sessionId))
-        if (!emitted) {
-            // If the SharedFlow could not accept the event, clear the guard so
-            // a subsequent callback can retry instead of permanently
-            // suppressing PlayNext for this track.
-            playNextEmitted.compareAndSet(true, false)
+        override fun joinSession(session: Session) {
+            playNextEmitted.set(false)
+            _session.value = session
         }
-    }
 
-    private fun isLocalUserHost(session: Session): Boolean =
-        session.localUserId == session.hostId
-}
+        override fun leaveSession() {
+            playNextEmitted.set(false)
+            _session.value = null
+        }
+
+        // -----------------------------------------------------------------
+        // Private helpers
+        // -----------------------------------------------------------------
+
+        private fun handleTrackEnded() {
+            val session = _session.value ?: return
+            if (!isLocalUserHost(session)) return
+            // compareAndSet returns true only for the first caller, preventing
+            // duplicate PLAY_NEXT emissions even under concurrent callbacks.
+            if (!playNextEmitted.compareAndSet(false, true)) return
+            val emitted = _events.tryEmit(SyncEvent.PlayNext(session.sessionId))
+            if (!emitted) {
+                // If the SharedFlow could not accept the event, clear the guard so
+                // a subsequent callback can retry instead of permanently
+                // suppressing PlayNext for this track.
+                playNextEmitted.compareAndSet(true, false)
+            }
+        }
+
+        private fun isLocalUserHost(session: Session): Boolean = session.localUserId == session.hostId
+    }

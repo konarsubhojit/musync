@@ -1,7 +1,7 @@
 package com.musync
 
-import org.junit.Test
 import org.junit.Assert.*
+import org.junit.Test
 
 class ExampleUnitTest {
     @Test

@@ -6,5 +6,5 @@ data class PlayerUiState(
     val isPlaying: Boolean = false,
     val currentSecond: Float = 0f,
     val duration: Float = 0f,
-    val isBuffering: Boolean = false
+    val isBuffering: Boolean = false,
 )

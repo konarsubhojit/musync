@@ -20,16 +20,16 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModelTest {
-
     private val testDispatcher = StandardTestDispatcher()
 
-    private val sampleTrack = Track(
-        id = "1",
-        title = "Test Song",
-        artist = "Test Artist",
-        youtubeVideoId = "testVideoId",
-        durationMs = 180_000
-    )
+    private val sampleTrack =
+        Track(
+            id = "1",
+            title = "Test Song",
+            artist = "Test Artist",
+            youtubeVideoId = "testVideoId",
+            durationMs = 180_000,
+        )
 
     @Before
     fun setUp() {
@@ -42,66 +42,74 @@ class PlayerViewModelTest {
     }
 
     @Test
-    fun `initial state has empty videoId and is not playing`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        val state = viewModel.uiState.value
-        assertEquals("", state.videoId)
-        assertFalse(state.isPlaying)
-    }
+    fun `initial state has empty videoId and is not playing`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            val state = viewModel.uiState.value
+            assertEquals("", state.videoId)
+            assertFalse(state.isPlaying)
+        }
 
     @Test
-    fun `init collects current track from repository and updates videoId`() = runTest {
-        val repo = FakeMusicRepository(initialTrack = sampleTrack)
-        val viewModel = PlayerViewModel(repo)
-        advanceUntilIdle()
-        assertEquals("testVideoId", viewModel.uiState.value.videoId)
-        assertEquals("Test Song", viewModel.uiState.value.trackTitle)
-    }
+    fun `init collects current track from repository and updates videoId`() =
+        runTest {
+            val repo = FakeMusicRepository(initialTrack = sampleTrack)
+            val viewModel = PlayerViewModel(repo)
+            advanceUntilIdle()
+            assertEquals("testVideoId", viewModel.uiState.value.videoId)
+            assertEquals("Test Song", viewModel.uiState.value.trackTitle)
+        }
 
     @Test
-    fun `onPlaybackStateChanged sets isPlaying to true`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        viewModel.onPlaybackStateChanged(isPlaying = true)
-        assertTrue(viewModel.uiState.value.isPlaying)
-    }
+    fun `onPlaybackStateChanged sets isPlaying to true`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            viewModel.onPlaybackStateChanged(isPlaying = true)
+            assertTrue(viewModel.uiState.value.isPlaying)
+        }
 
     @Test
-    fun `onPlaybackStateChanged sets isPlaying to false`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        viewModel.onPlaybackStateChanged(isPlaying = true)
-        viewModel.onPlaybackStateChanged(isPlaying = false)
-        assertFalse(viewModel.uiState.value.isPlaying)
-    }
+    fun `onPlaybackStateChanged sets isPlaying to false`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            viewModel.onPlaybackStateChanged(isPlaying = true)
+            viewModel.onPlaybackStateChanged(isPlaying = false)
+            assertFalse(viewModel.uiState.value.isPlaying)
+        }
 
     @Test
-    fun `onPlaybackStateChanged sets isBuffering`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        viewModel.onPlaybackStateChanged(isPlaying = false, isBuffering = true)
-        assertTrue(viewModel.uiState.value.isBuffering)
-    }
+    fun `onPlaybackStateChanged sets isBuffering`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            viewModel.onPlaybackStateChanged(isPlaying = false, isBuffering = true)
+            assertTrue(viewModel.uiState.value.isBuffering)
+        }
 
     @Test
-    fun `onCurrentSecond updates currentSecond state`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        viewModel.onCurrentSecond(42.5f)
-        assertEquals(42.5f, viewModel.uiState.value.currentSecond)
-    }
+    fun `onCurrentSecond updates currentSecond state`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            viewModel.onCurrentSecond(42.5f)
+            assertEquals(42.5f, viewModel.uiState.value.currentSecond)
+        }
 
     @Test
-    fun `onDurationReceived updates duration state`() = runTest {
-        val viewModel = PlayerViewModel(FakeMusicRepository())
-        viewModel.onDurationReceived(180f)
-        assertEquals(180f, viewModel.uiState.value.duration)
-    }
+    fun `onDurationReceived updates duration state`() =
+        runTest {
+            val viewModel = PlayerViewModel(FakeMusicRepository())
+            viewModel.onDurationReceived(180f)
+            assertEquals(180f, viewModel.uiState.value.duration)
+        }
 
     // --- Fake repository ---
 
     private class FakeMusicRepository(
-        initialTrack: Track? = null
+        initialTrack: Track? = null,
     ) : MusicRepository {
         private val trackFlow = MutableStateFlow(initialTrack)
 
-        override fun getCurrentTrack(): Flow<Track?> = trackFlow
-        override fun getQueue(): Flow<List<Track>> = MutableStateFlow(emptyList())
+        override val currentTrack: Flow<Track?> = trackFlow
+
+        override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
     }
 }

@@ -7,11 +7,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 interface SessionRepository {
-    /** Returns a flow of the current session, or null when not in a session. */
-    fun getSession(): StateFlow<Session?>
+    /** A flow of the current session, or null when not in a session. */
+    val session: StateFlow<Session?>
 
-    /** Returns a flow of outgoing sync events to be forwarded to the server. */
-    fun getEvents(): SharedFlow<SyncEvent>
+    /** A flow of outgoing sync events to be forwarded to the server. */
+    val events: SharedFlow<SyncEvent>
 
     /**
      * Called whenever the player state changes.

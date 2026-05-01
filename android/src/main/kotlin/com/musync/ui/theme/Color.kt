@@ -12,9 +12,9 @@ val PurpleGrey40 = Color(0xFF625B71)
 val Pink40 = Color(0xFF7D5260)
 
 // MuSync brand colors
-val MuSyncPrimary = Color(0xFF1DB954)       // Spotify-style green for music
+val MuSyncPrimary = Color(0xFF1DB954) // Spotify-style green for music
 val MuSyncPrimaryVariant = Color(0xFF17A347)
-val MuSyncSecondary = Color(0xFF191414)     // Deep dark background
+val MuSyncSecondary = Color(0xFF191414) // Deep dark background
 val MuSyncBackground = Color(0xFF121212)
 val MuSyncSurface = Color(0xFF282828)
 val MuSyncOnPrimary = Color(0xFFFFFFFF)
