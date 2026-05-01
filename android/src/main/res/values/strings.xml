@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MuSync</string>
+    <string name="share_invite">Share Invite</string>
+    <string name="share_invite_link_description">Share invite link</string>
+    <string name="invite_link_copied">Invite link copied to clipboard</string>
 </resources>

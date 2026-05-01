@@ -112,7 +112,51 @@ class PlayerViewModelTest {
             assertEquals(180f, viewModel.uiState.value.duration)
         }
 
-    // --- Deep link tests ---
+    @Test
+    fun `inviteLink is set to a non-empty URL when no roomId is provided`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            val link = viewModel.uiState.value.inviteLink
+            assertTrue("inviteLink should be non-empty", link.isNotEmpty())
+            assertTrue(
+                "inviteLink should start with INVITE_LINK_BASE_URL",
+                link.startsWith(PlayerViewModel.INVITE_LINK_BASE_URL),
+            )
+        }
+
+    @Test
+    fun `inviteLink includes the roomId when joining via deep link`() =
+        runTest {
+            val viewModel =
+                PlayerViewModel(
+                    SavedStateHandle(mapOf("roomId" to "room-deep")),
+                    FakeMusicRepository(),
+                    FakeSessionRepository(),
+                )
+            val link = viewModel.uiState.value.inviteLink
+            assertTrue(
+                "inviteLink should contain roomId",
+                link.endsWith("room-deep"),
+            )
+        }
+
+    @Test
+    fun `onInviteLinkCopied sets inviteLinkCopied to true`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            viewModel.onInviteLinkCopied()
+            assertTrue(viewModel.uiState.value.inviteLinkCopied)
+        }
+
+    @Test
+    fun `inviteLinkCopied resets to false after feedback duration`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            viewModel.onInviteLinkCopied()
+            assertTrue(viewModel.uiState.value.inviteLinkCopied)
+            advanceUntilIdle()
+            assertFalse(viewModel.uiState.value.inviteLinkCopied)
+        }
 
     @Test
     fun `joins session when roomId is provided via SavedStateHandle`() =
