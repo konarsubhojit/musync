@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="musync_primary">#FF1DB954</color>
+    <color name="musync_primary_variant">#FF17A347</color>
+    <color name="musync_secondary">#FF191414</color>
+    <color name="musync_background">#FF121212</color>
+    <color name="musync_surface">#FF282828</color>
+</resources>
