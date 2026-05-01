@@ -1,40 +1,33 @@
 # ProGuard rules for MuSync
 
 # ==================== AndroidYouTubePlayer ====================
+# Required: library uses reflection to invoke JS callbacks and load the player bridge
 -keep class com.pierfrancescosoffritti.androidyoutubeplayer.** { *; }
--keep interface com.pierfrancescosoffritti.androidyoutubeplayer.** { *; }
--keepclassmembers class com.pierfrancescosoffritti.androidyoutubeplayer.** { *; }
 
 # ==================== Socket.IO / Engine.IO ====================
+# Required: Socket.IO uses reflection for event-emitter callbacks and JSON parsing
 -keep class io.socket.** { *; }
--keep interface io.socket.** { *; }
--keepclassmembers class io.socket.** { *; }
--keep class io.socket.client.** { *; }
--keep class io.socket.engineio.client.** { *; }
--keep class io.socket.emitter.** { *; }
--keep class io.socket.parser.** { *; }
 
-# OkHttp (used by Socket.IO transport)
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**
+# ==================== OkHttp (Socket.IO WebSocket transport) ====================
+# OkHttp ships its own consumer rules; only suppress warnings for platform-only APIs
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
 
-# Okio
--keep class okio.** { *; }
+# ==================== Okio ====================
 -dontwarn okio.**
 
 # ==================== Kotlin & Coroutines ====================
--keep class kotlin.** { *; }
--keep class kotlinx.coroutines.** { *; }
--dontwarn kotlin.**
--dontwarn kotlinx.coroutines.**
+# Rules are provided by the Kotlin Gradle plugin and kotlinx-coroutines consumer proguard file;
+# only suppress warnings for internal reflection helpers
+-dontwarn kotlin.reflect.jvm.internal.**
 
 # ==================== Hilt ====================
--keep class dagger.hilt.** { *; }
--keep class javax.inject.** { *; }
+# Hilt provides its own consumer rules; only keep annotated entry-point classes
 -keep @dagger.hilt.android.HiltAndroidApp class * { *; }
 -keep @dagger.hilt.InstallIn class * { *; }
+-keep @dagger.hilt.android.AndroidEntryPoint class * { *; }
 
 # ==================== Gson / JSON ====================
 -keepattributes Signature
