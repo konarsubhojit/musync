@@ -12,35 +12,39 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class PlayerViewModel @Inject constructor(
-    private val musicRepository: MusicRepository
-) : ViewModel() {
+class PlayerViewModel
+    @Inject
+    constructor(
+        private val musicRepository: MusicRepository,
+    ) : ViewModel() {
+        private val _uiState = MutableStateFlow(PlayerUiState())
+        val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
-    private val _uiState = MutableStateFlow(PlayerUiState())
-    val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            musicRepository.getCurrentTrack().collect { track ->
-                _uiState.update { state ->
-                    state.copy(
-                        videoId = track?.youtubeVideoId ?: "",
-                        trackTitle = track?.title ?: ""
-                    )
+        init {
+            viewModelScope.launch {
+                musicRepository.currentTrack.collect { track ->
+                    _uiState.update { state ->
+                        state.copy(
+                            videoId = track?.youtubeVideoId ?: "",
+                            trackTitle = track?.title ?: "",
+                        )
+                    }
                 }
             }
         }
-    }
 
-    fun onPlaybackStateChanged(isPlaying: Boolean, isBuffering: Boolean = false) {
-        _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
-    }
+        fun onPlaybackStateChanged(
+            isPlaying: Boolean,
+            isBuffering: Boolean = false,
+        ) {
+            _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
+        }
 
-    fun onCurrentSecond(second: Float) {
-        _uiState.update { it.copy(currentSecond = second) }
-    }
+        fun onCurrentSecond(second: Float) {
+            _uiState.update { it.copy(currentSecond = second) }
+        }
 
-    fun onDurationReceived(duration: Float) {
-        _uiState.update { it.copy(duration = duration) }
+        fun onDurationReceived(duration: Float) {
+            _uiState.update { it.copy(duration = duration) }
+        }
     }
-}

@@ -8,20 +8,22 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class MusicRepositoryImpl @Inject constructor() : MusicRepository {
+class MusicRepositoryImpl
+    @Inject
+    constructor() : MusicRepository {
+        private val _currentTrack =
+            MutableStateFlow<Track?>(
+                Track(
+                    id = "1",
+                    title = "Me at the zoo",
+                    artist = "jawed",
+                    youtubeVideoId = "jNQXAC9IVRw",
+                    durationMs = 19000,
+                ),
+            )
+        private val _queue = MutableStateFlow<List<Track>>(emptyList())
 
-    private val _currentTrack = MutableStateFlow<Track?>(
-        Track(
-            id = "1",
-            title = "Me at the zoo",
-            artist = "jawed",
-            youtubeVideoId = "jNQXAC9IVRw",
-            durationMs = 19000
-        )
-    )
-    private val _queue = MutableStateFlow<List<Track>>(emptyList())
+        override val currentTrack: Flow<Track?> = _currentTrack.asStateFlow()
 
-    override fun getCurrentTrack(): Flow<Track?> = _currentTrack.asStateFlow()
-
-    override fun getQueue(): Flow<List<Track>> = _queue.asStateFlow()
-}
+        override val queue: Flow<List<Track>> = _queue.asStateFlow()
+    }

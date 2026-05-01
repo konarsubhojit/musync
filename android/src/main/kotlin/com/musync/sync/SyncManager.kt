@@ -18,64 +18,69 @@ import kotlin.math.abs
  * Attach the local player controls via [attachPlayer] before calling [startListening].
  */
 @Singleton
-class SyncManager @Inject constructor(
-    private val socket: Socket,
-    private val clock: Clock,
-) {
+class SyncManager
+    @Inject
+    constructor(
+        private val socket: Socket,
+        private val clock: Clock,
+    ) {
+        companion object {
+            /** Minimum absolute drift (ms) that triggers a seek correction. */
+            const val SEEK_THRESHOLD_MS = 2_000L
+        }
 
-    companion object {
-        /** Minimum absolute drift (ms) that triggers a seek correction. */
-        const val SEEK_THRESHOLD_MS = 2_000L
-    }
+        private var localPosition: () -> Long = { 0L }
+        private var seekTo: (Long) -> Unit = {}
 
-    private var localPosition: () -> Long = { 0L }
-    private var seekTo: (Long) -> Unit = {}
+        /**
+         * Provides the [SyncManager] with callbacks to read / control the local player.
+         *
+         * @param getPosition Lambda that returns the current playback position in milliseconds.
+         * @param onSeek      Lambda that seeks the local player to the given position in milliseconds.
+         */
+        fun attachPlayer(
+            getPosition: () -> Long,
+            onSeek: (Long) -> Unit,
+        ) {
+            localPosition = getPosition
+            seekTo = onSeek
+        }
 
-    /**
-     * Provides the [SyncManager] with callbacks to read / control the local player.
-     *
-     * @param getPosition Lambda that returns the current playback position in milliseconds.
-     * @param onSeek      Lambda that seeks the local player to the given position in milliseconds.
-     */
-    fun attachPlayer(getPosition: () -> Long, onSeek: (Long) -> Unit) {
-        localPosition = getPosition
-        seekTo = onSeek
-    }
+        /** Registers the [SocketEvents.SYNC_HEARTBEAT] listener on the socket. */
+        fun startListening() {
+            socket.on(SocketEvents.SYNC_HEARTBEAT) { args ->
+                val json = args.firstOrNull() as? JSONObject ?: return@on
+                val heartbeat =
+                    SyncHeartbeat(
+                        hostPositionMs = json.optLong("hostPositionMs"),
+                        hostTimestamp = json.optLong("hostTimestamp"),
+                    )
+                handleHeartbeat(heartbeat)
+            }
+        }
 
-    /** Registers the [SocketEvents.SYNC_HEARTBEAT] listener on the socket. */
-    fun startListening() {
-        socket.on(SocketEvents.SYNC_HEARTBEAT) { args ->
-            val json = args.firstOrNull() as? JSONObject ?: return@on
-            val heartbeat = SyncHeartbeat(
-                hostPositionMs = json.optLong("hostPositionMs"),
-                hostTimestamp = json.optLong("hostTimestamp"),
-            )
-            handleHeartbeat(heartbeat)
+        /** Removes the [SocketEvents.SYNC_HEARTBEAT] listener from the socket. */
+        fun stopListening() {
+            socket.off(SocketEvents.SYNC_HEARTBEAT)
+        }
+
+        /**
+         * Core drift-correction logic, separated from socket parsing so it can be unit-tested
+         * without an Android runtime or a real socket.
+         *
+         * The estimated host position accounts for the time elapsed since the heartbeat was sent:
+         * ```
+         * estimatedHostPosition = hostPositionMs + (localNow - hostTimestamp)
+         * ```
+         * If `|localPosition - estimatedHostPosition| > SEEK_THRESHOLD_MS` a seek is issued.
+         */
+        internal fun handleHeartbeat(heartbeat: SyncHeartbeat) {
+            val now = clock.currentTimeMs()
+            val estimatedHostPosition = heartbeat.hostPositionMs + (now - heartbeat.hostTimestamp)
+            val drift = localPosition() - estimatedHostPosition
+
+            if (abs(drift) > SEEK_THRESHOLD_MS) {
+                seekTo(estimatedHostPosition)
+            }
         }
     }
-
-    /** Removes the [SocketEvents.SYNC_HEARTBEAT] listener from the socket. */
-    fun stopListening() {
-        socket.off(SocketEvents.SYNC_HEARTBEAT)
-    }
-
-    /**
-     * Core drift-correction logic, separated from socket parsing so it can be unit-tested
-     * without an Android runtime or a real socket.
-     *
-     * The estimated host position accounts for the time elapsed since the heartbeat was sent:
-     * ```
-     * estimatedHostPosition = hostPositionMs + (localNow - hostTimestamp)
-     * ```
-     * If `|localPosition - estimatedHostPosition| > SEEK_THRESHOLD_MS` a seek is issued.
-     */
-    internal fun handleHeartbeat(heartbeat: SyncHeartbeat) {
-        val now = clock.currentTimeMs()
-        val estimatedHostPosition = heartbeat.hostPositionMs + (now - heartbeat.hostTimestamp)
-        val drift = localPosition() - estimatedHostPosition
-
-        if (abs(drift) > SEEK_THRESHOLD_MS) {
-            seekTo(estimatedHostPosition)
-        }
-    }
-}

@@ -10,17 +10,18 @@ import com.musync.ui.player.PlayerScreen
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
+
     data object Player : Screen("player")
 }
 
 @Composable
 fun MuSyncNavGraph(
     navController: NavHostController = rememberNavController(),
-    startDestination: String = Screen.Home.route
+    startDestination: String = Screen.Home.route,
 ) {
     NavHost(
         navController = navController,
-        startDestination = startDestination
+        startDestination = startDestination,
     ) {
         composable(Screen.Home.route) {
             HomeScreen(onNavigateToPlayer = { navController.navigate(Screen.Player.route) })

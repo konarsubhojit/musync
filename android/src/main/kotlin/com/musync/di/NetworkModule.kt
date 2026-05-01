@@ -13,7 +13,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
-
     /**
      * Signalling server URL.
      * `10.0.2.2` is the special alias that routes from the Android emulator to the host

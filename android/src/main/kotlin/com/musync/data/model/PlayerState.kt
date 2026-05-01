@@ -6,5 +6,5 @@ enum class PlayerState {
     PLAYING,
     PAUSED,
     BUFFERING,
-    CUED
+    CUED,
 }

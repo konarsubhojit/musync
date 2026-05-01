@@ -5,5 +5,5 @@ data class Track(
     val title: String,
     val artist: String,
     val youtubeVideoId: String,
-    val durationMs: Long
+    val durationMs: Long,
 )

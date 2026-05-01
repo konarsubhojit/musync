@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,22 +35,22 @@ import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstan
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
 @Composable
-fun PlayerScreen(
-    viewModel: PlayerViewModel = hiltViewModel()
-) {
+fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var youTubePlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black),
     ) {
         // Video area with overlay controls
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f),
         ) {
             YouTubePlayerComposable(
                 videoId = uiState.videoId,
@@ -59,12 +58,12 @@ fun PlayerScreen(
                 onStateChange = { state ->
                     viewModel.onPlaybackStateChanged(
                         isPlaying = state == PlayerConstants.PlayerState.PLAYING,
-                        isBuffering = state == PlayerConstants.PlayerState.BUFFERING
+                        isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
                     )
                 },
                 onCurrentSecond = viewModel::onCurrentSecond,
                 onDuration = viewModel::onDurationReceived,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
             )
 
             // Custom controls overlay
@@ -80,9 +79,10 @@ fun PlayerScreen(
                     if (uiState.isPlaying) player.pause() else player.play()
                 },
                 onSeek = { second -> youTubePlayer?.seekTo(second) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(),
             )
         }
     }
@@ -98,12 +98,13 @@ private fun PlayerOverlayControls(
     trackTitle: String,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+        modifier =
+            modifier
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         // Track title
         if (trackTitle.isNotEmpty()) {
@@ -112,7 +113,7 @@ private fun PlayerOverlayControls(
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White,
                 maxLines = 1,
-                modifier = Modifier.padding(bottom = 4.dp)
+                modifier = Modifier.padding(bottom = 4.dp),
             )
         }
 
@@ -123,31 +124,32 @@ private fun PlayerOverlayControls(
             onValueChange = onSeek,
             valueRange = 0f..sliderMax,
             enabled = playerReady,
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = Color.White.copy(alpha = 0.4f)
-            ),
-            modifier = Modifier.fillMaxWidth()
+            colors =
+                SliderDefaults.colors(
+                    thumbColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.4f),
+                ),
+            modifier = Modifier.fillMaxWidth(),
         )
 
         // Play/pause button and time display
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
                 text = formatSeconds(currentSecond),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White
+                color = Color.White,
             )
 
             if (!playerReady || isBuffering) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(32.dp),
                     color = Color.White,
-                    strokeWidth = 2.dp
+                    strokeWidth = 2.dp,
                 )
             } else {
                 IconButton(onClick = onPlayPause) {
@@ -155,7 +157,7 @@ private fun PlayerOverlayControls(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(32.dp),
                     )
                 }
             }
@@ -163,7 +165,7 @@ private fun PlayerOverlayControls(
             Text(
                 text = formatSeconds(duration),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White
+                color = Color.White,
             )
         }
     }

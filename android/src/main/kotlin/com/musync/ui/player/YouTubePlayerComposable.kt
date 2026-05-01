@@ -32,7 +32,7 @@ fun YouTubePlayerComposable(
     onStateChange: (PlayerConstants.PlayerState) -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDuration: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -40,38 +40,46 @@ fun YouTubePlayerComposable(
     var playerRef by remember { mutableStateOf<YouTubePlayer?>(null) }
     var loadedVideoId by remember { mutableStateOf("") }
 
-    val youTubePlayerView = remember(context) {
-        val options = IFramePlayerOptions.Builder()
-            .controls(0)
-            .build()
+    val youTubePlayerView =
+        remember(context) {
+            val options =
+                IFramePlayerOptions.Builder()
+                    .controls(0)
+                    .build()
 
-        YouTubePlayerView(context).also { view ->
-            view.initialize(
-                object : AbstractYouTubePlayerListener() {
-                    override fun onReady(youTubePlayer: YouTubePlayer) {
-                        playerRef = youTubePlayer
-                        onPlayerReady(youTubePlayer)
-                    }
+            YouTubePlayerView(context).also { view ->
+                view.initialize(
+                    object : AbstractYouTubePlayerListener() {
+                        override fun onReady(youTubePlayer: YouTubePlayer) {
+                            playerRef = youTubePlayer
+                            onPlayerReady(youTubePlayer)
+                        }
 
-                    override fun onStateChange(
-                        youTubePlayer: YouTubePlayer,
-                        state: PlayerConstants.PlayerState
-                    ) {
-                        onStateChange(state)
-                    }
+                        override fun onStateChange(
+                            youTubePlayer: YouTubePlayer,
+                            state: PlayerConstants.PlayerState,
+                        ) {
+                            onStateChange(state)
+                        }
 
-                    override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
-                        onCurrentSecond(second)
-                    }
+                        override fun onCurrentSecond(
+                            youTubePlayer: YouTubePlayer,
+                            second: Float,
+                        ) {
+                            onCurrentSecond(second)
+                        }
 
-                    override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
-                        onDuration(duration)
-                    }
-                },
-                options
-            )
+                        override fun onVideoDuration(
+                            youTubePlayer: YouTubePlayer,
+                            duration: Float,
+                        ) {
+                            onDuration(duration)
+                        }
+                    },
+                    options,
+                )
+            }
         }
-    }
 
     // Register/unregister with the lifecycle so the player pauses/resumes correctly.
     DisposableEffect(lifecycleOwner) {
@@ -93,6 +101,6 @@ fun YouTubePlayerComposable(
 
     AndroidView(
         factory = { youTubePlayerView },
-        modifier = modifier
+        modifier = modifier,
     )
 }

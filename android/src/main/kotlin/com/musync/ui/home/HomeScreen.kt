@@ -19,19 +19,19 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
-    onNavigateToPlayer: () -> Unit = {}
+    onNavigateToPlayer: () -> Unit = {},
 ) {
     val currentTrack by viewModel.currentTrack.collectAsState(initial = null)
 
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = currentTrack?.title ?: "MuSync",
             style = MaterialTheme.typography.headlineLarge,
-            color = MaterialTheme.colorScheme.primary
+            color = MaterialTheme.colorScheme.primary,
         )
 
         val track = currentTrack
@@ -40,7 +40,7 @@ fun HomeScreen(
             Text(
                 text = track.artist,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onNavigateToPlayer) {
