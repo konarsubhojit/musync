@@ -36,9 +36,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.musync.R
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
@@ -50,9 +52,12 @@ fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Show snackbar briefly when the invite link has been copied.
+    // Dismiss any currently visible snackbar first to avoid stacking.
+    val inviteLinkCopiedMessage = stringResource(R.string.invite_link_copied)
     LaunchedEffect(uiState.inviteLinkCopied) {
         if (uiState.inviteLinkCopied) {
-            snackbarHostState.showSnackbar("Invite link copied to clipboard")
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(inviteLinkCopiedMessage)
         }
     }
 
@@ -121,11 +126,11 @@ fun PlayerScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Share,
-                        contentDescription = "Share invite link",
+                        contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        text = "Share Invite",
+                        text = stringResource(R.string.share_invite),
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }

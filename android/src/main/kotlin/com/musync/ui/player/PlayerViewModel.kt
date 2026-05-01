@@ -102,9 +102,10 @@ class PlayerViewModel
         fun onInviteLinkCopied() {
             inviteCopiedResetJob?.cancel()
             _uiState.update { it.copy(inviteLinkCopied = true) }
-            inviteCopiedResetJob = viewModelScope.launch {
-                delay(INVITE_COPIED_FEEDBACK_DURATION_MS)
-                _uiState.update { it.copy(inviteLinkCopied = false) }
-            }
+            inviteCopiedResetJob =
+                viewModelScope.launch {
+                    delay(INVITE_COPIED_FEEDBACK_DURATION_MS)
+                    _uiState.update { it.copy(inviteLinkCopied = false) }
+                }
         }
     }

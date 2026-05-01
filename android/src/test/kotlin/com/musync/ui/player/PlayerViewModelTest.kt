@@ -127,11 +127,12 @@ class PlayerViewModelTest {
     @Test
     fun `inviteLink includes the roomId when joining via deep link`() =
         runTest {
-            val viewModel = PlayerViewModel(
-                SavedStateHandle(mapOf("roomId" to "room-deep")),
-                FakeMusicRepository(),
-                FakeSessionRepository(),
-            )
+            val viewModel =
+                PlayerViewModel(
+                    SavedStateHandle(mapOf("roomId" to "room-deep")),
+                    FakeMusicRepository(),
+                    FakeSessionRepository(),
+                )
             val link = viewModel.uiState.value.inviteLink
             assertTrue(
                 "inviteLink should contain roomId",
