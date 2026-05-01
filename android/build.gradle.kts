@@ -11,6 +11,33 @@ android {
     namespace = "com.musync"
     compileSdk = 34
 
+    /**
+     * Build-time configuration values.
+     *
+     * These are sourced (in priority order) from:
+     *   1. Gradle project properties (e.g. `-PSERVER_URL=...` or
+     *      `ORG_GRADLE_PROJECT_SERVER_URL` env var, which is how GitHub Actions
+     *      injects values from `vars`/`secrets`)
+     *   2. Plain environment variables of the same name
+     *   3. The hard-coded fallbacks below, which keep local emulator builds
+     *      working out of the box.
+     *
+     * This makes the CI-built debug APK a fully-working artifact whose
+     * endpoints can be pointed at any environment without code changes.
+     */
+    fun configValue(
+        name: String,
+        default: String,
+    ): String {
+        val fromProperty = (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+        val fromEnv = System.getenv(name)?.takeIf { it.isNotBlank() }
+        return fromProperty ?: fromEnv ?: default
+    }
+
+    val serverUrl = configValue("SERVER_URL", "http://10.0.2.2:3000")
+    val inviteLinkBaseUrl = configValue("INVITE_LINK_BASE_URL", "https://listen.yourdomain.com/room")
+    val inviteLinkHost = configValue("INVITE_LINK_HOST", "listen.yourdomain.com")
+
     defaultConfig {
         applicationId = "com.musync"
         minSdk = 26
@@ -22,6 +49,14 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
+        buildConfigField("String", "INVITE_LINK_BASE_URL", "\"$inviteLinkBaseUrl\"")
+
+        // Parameterise the deep-link host declared in AndroidManifest.xml so
+        // installed APKs can be pointed at the same domain as the configured
+        // invite-link base URL.
+        manifestPlaceholders["inviteLinkHost"] = inviteLinkHost
     }
 
     buildTypes {
@@ -49,6 +84,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

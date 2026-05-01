@@ -29,6 +29,56 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── invite-link landing page ──────────────────────────────────────────────
+  describe('GET /room/:roomId', () => {
+    it('returns 200 with an HTML page that mentions the roomId', async () => {
+      const res = await request(app).get('/room/abc-123');
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/text\/html/);
+      expect(res.text).toContain('abc-123');
+      expect(res.text).toContain('MuSync');
+    });
+
+    it('rejects roomIds that contain unsafe characters', async () => {
+      const res = await request(app).get('/room/' + encodeURIComponent('<script>'));
+      expect(res.status).toBe(400);
+      expect(res.text).not.toContain('<script>');
+    });
+  });
+
+  // ── Android App Links manifest ────────────────────────────────────────────
+  describe('GET /.well-known/assetlinks.json', () => {
+    const originalPackage = process.env.ANDROID_APP_PACKAGE_NAME;
+    const originalFingerprints = process.env.ANDROID_APP_SHA256_FINGERPRINTS;
+
+    afterEach(() => {
+      if (originalPackage === undefined) delete process.env.ANDROID_APP_PACKAGE_NAME;
+      else process.env.ANDROID_APP_PACKAGE_NAME = originalPackage;
+      if (originalFingerprints === undefined) delete process.env.ANDROID_APP_SHA256_FINGERPRINTS;
+      else process.env.ANDROID_APP_SHA256_FINGERPRINTS = originalFingerprints;
+    });
+
+    it('returns 404 when no fingerprints are configured', async () => {
+      delete process.env.ANDROID_APP_SHA256_FINGERPRINTS;
+      const res = await request(app).get('/.well-known/assetlinks.json');
+      expect(res.status).toBe(404);
+    });
+
+    it('returns a valid manifest when fingerprints are configured', async () => {
+      process.env.ANDROID_APP_PACKAGE_NAME = 'com.example.test';
+      process.env.ANDROID_APP_SHA256_FINGERPRINTS = 'AA:BB:CC, 11:22:33';
+      const res = await request(app).get('/.well-known/assetlinks.json');
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body[0].relation).toEqual(['delegate_permission/common.handle_all_urls']);
+      expect(res.body[0].target).toEqual({
+        namespace: 'android_app',
+        package_name: 'com.example.test',
+        sha256_cert_fingerprints: ['AA:BB:CC', '11:22:33'],
+      });
+    });
+  });
+
   // ── Socket.IO helpers ─────────────────────────────────────────────────────
   function connect() {
     return new Promise((resolve) => {
