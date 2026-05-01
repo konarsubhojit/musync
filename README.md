@@ -39,6 +39,43 @@ Configure them under
 Use `secrets.*` (and reference them the same way in the workflow) for any
 value that must not be exposed in logs.
 
+### Deterministic debug signing (CI)
+
+CI debug builds can be signed with a stable, known keystore so the
+SHA-256 certificate fingerprint never changes between builds.  This is
+required to use Android App Links verification (`autoVerify="true"`) with
+a fixed `ANDROID_APP_SHA256_FINGERPRINTS` value on the server.
+
+When the four secrets below are set in the repository, `assembleDebug`
+uses the supplied keystore instead of the default per-machine Android debug
+key.  When they are absent (e.g. on a fork or a local developer machine)
+the build falls back to the normal Android debug keystore so nothing breaks.
+
+Configure all four secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret                   | Description                                                    |
+| ------------------------ | -------------------------------------------------------------- |
+| `DEBUG_KEYSTORE_BASE64`  | Base64-encoded `.jks` / `.keystore` file (`base64 debug.jks` on Linux/macOS) |
+| `DEBUG_KEYSTORE_PASSWORD`| Keystore store password                                        |
+| `DEBUG_KEY_ALIAS`        | Key alias inside the keystore                                  |
+| `DEBUG_KEY_PASSWORD`     | Key password                                                   |
+
+Once the keystore is in place, retrieve the SHA-256 fingerprint with:
+
+```sh
+keytool -list -v -keystore debug.jks -alias <alias>
+```
+
+Set that fingerprint (and your release fingerprint if applicable) as
+`ANDROID_APP_SHA256_FINGERPRINTS` in the server environment (see
+`server/.env.example`).
+
+**Notes:**
+- `ANDROID_APP_PACKAGE_NAME` stays `com.musync`.
+- Release signing is **not** affected by these variables; configure release
+  signing separately when you prepare a production build.
+- Local developers do not need to set any of these variables.
+
 ### Using the same host for the API and invite links
 
 `SERVER_URL` and `INVITE_LINK_HOST` can point to **the same** Node.js

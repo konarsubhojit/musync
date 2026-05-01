@@ -59,6 +59,43 @@ android {
         manifestPlaceholders["inviteLinkHost"] = inviteLinkHost
     }
 
+    // ── Deterministic debug signing ───────────────────────────────────────────
+    // When all four env vars below are set (e.g. in CI), the debug build type
+    // is signed with the supplied keystore so the SHA-256 fingerprint is stable
+    // across machines.  This lets `ANDROID_APP_SHA256_FINGERPRINTS` on the
+    // server stay fixed for CI-built debug APKs used with Android App Links.
+    //
+    // Required environment variables (all must be non-blank to take effect):
+    //   DEBUG_KEYSTORE_PATH      – absolute path to the .keystore / .jks file
+    //   DEBUG_KEYSTORE_PASSWORD  – store password
+    //   DEBUG_KEY_ALIAS          – key alias inside the keystore
+    //   DEBUG_KEY_PASSWORD       – key password
+    //
+    // When any variable is absent the debug build falls back to the default
+    // Android debug keystore so local development is never broken.
+    val debugKeystorePath = System.getenv("DEBUG_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+    val debugKeystorePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+    val debugKeyAlias = System.getenv("DEBUG_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+    val debugKeyPassword = System.getenv("DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+
+    val hasCustomDebugSigning = listOf(
+        debugKeystorePath,
+        debugKeystorePassword,
+        debugKeyAlias,
+        debugKeyPassword,
+    ).all { it != null }
+
+    if (hasCustomDebugSigning) {
+        signingConfigs {
+            create("debugCustom") {
+                storeFile = file(debugKeystorePath!!)
+                storePassword = debugKeystorePassword!!
+                keyAlias = debugKeyAlias!!
+                keyPassword = debugKeyPassword!!
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -70,6 +107,9 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            if (hasCustomDebugSigning) {
+                signingConfig = signingConfigs.getByName("debugCustom")
+            }
         }
     }
 
