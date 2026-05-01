@@ -13,6 +13,25 @@ jobs:
     permissions:
       contents: read
 
+    # Inject build-time configuration so the produced debug APK is fully
+    # working against a real backend rather than the emulator-only defaults
+    # baked into the source tree.
+    #
+    # These are read by `android/build.gradle.kts` via project properties
+    # (`ORG_GRADLE_PROJECT_<NAME>` env vars become Gradle properties named
+    # `<NAME>`).  Configure them under the repository's
+    # Settings → Secrets and variables → Actions:
+    #   - `vars.SERVER_URL`           – signalling server base URL
+    #   - `vars.INVITE_LINK_BASE_URL` – base URL used in invite deep links
+    #   - `vars.INVITE_LINK_HOST`     – host used for the deep-link intent filter
+    # Use `secrets.*` instead of `vars.*` for any value that must not be
+    # exposed in logs.  When unset, the in-source defaults are used so that
+    # forks and local builds keep working.
+    env:
+      ORG_GRADLE_PROJECT_SERVER_URL: ${{ vars.SERVER_URL }}
+      ORG_GRADLE_PROJECT_INVITE_LINK_BASE_URL: ${{ vars.INVITE_LINK_BASE_URL }}
+      ORG_GRADLE_PROJECT_INVITE_LINK_HOST: ${{ vars.INVITE_LINK_HOST }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

@@ -3,6 +3,7 @@ package com.musync.ui.player
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.musync.BuildConfig
 import com.musync.data.model.Session
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
@@ -35,9 +36,15 @@ class PlayerViewModel
              */
             internal const val DEEP_LINK_HOST_ID_PLACEHOLDER = "remote_host"
 
-            /** Base URL used to build the invite deep link.
-             * TODO: Replace with the production domain before release. */
-            internal const val INVITE_LINK_BASE_URL = "https://listen.yourdomain.com/room"
+            /**
+             * Base URL used to build the invite deep link.
+             *
+             * Sourced from `BuildConfig.INVITE_LINK_BASE_URL`, which is configured at
+             * build time via the `INVITE_LINK_BASE_URL` Gradle property / environment
+             * variable (see `android/build.gradle.kts`).  This lets CI builds point
+             * the APK at the real production domain without code changes.
+             */
+            internal val INVITE_LINK_BASE_URL: String = BuildConfig.INVITE_LINK_BASE_URL
 
             /** Duration (ms) to show the "link copied" feedback in the UI. */
             internal const val INVITE_COPIED_FEEDBACK_DURATION_MS = 2_000L
