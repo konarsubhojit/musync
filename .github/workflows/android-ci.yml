@@ -64,14 +64,21 @@ jobs:
       # back to the default Android debug keystore.  Forks and pull requests
       # from external contributors keep working without any secrets configured.
       - name: Decode debug keystore
-        if: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        if: ${{ env.DEBUG_KEYSTORE_BASE64 != '' }}
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
         run: |
           KEYSTORE_PATH="${{ github.workspace }}/debug.keystore"
-          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
-          echo "DEBUG_KEYSTORE_PATH=$KEYSTORE_PATH"          >> "$GITHUB_ENV"
-          echo "DEBUG_KEYSTORE_PASSWORD=${{ secrets.DEBUG_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "DEBUG_KEY_ALIAS=${{ secrets.DEBUG_KEY_ALIAS }}"           >> "$GITHUB_ENV"
-          echo "DEBUG_KEY_PASSWORD=${{ secrets.DEBUG_KEY_PASSWORD }}"     >> "$GITHUB_ENV"
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          {
+            echo "DEBUG_KEYSTORE_PATH=$KEYSTORE_PATH"
+            echo "DEBUG_KEYSTORE_PASSWORD=$DEBUG_KEYSTORE_PASSWORD"
+            echo "DEBUG_KEY_ALIAS=$DEBUG_KEY_ALIAS"
+            echo "DEBUG_KEY_PASSWORD=$DEBUG_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
 
       - name: Build debug APK
         run: ./gradlew :android:assembleDebug
