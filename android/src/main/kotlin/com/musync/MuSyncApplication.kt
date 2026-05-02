@@ -20,7 +20,12 @@ class MuSyncApplication : Application() {
     private fun installCrashHandler() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            AppLogger.e(TAG, "Uncaught exception on thread ${thread.name}", throwable)
+            try {
+                AppLogger.e(TAG, "Uncaught exception on thread ${thread.name}", throwable)
+            } catch (_: Throwable) {
+                // Defensive: if AppLogger itself throws, ignore so the original
+                // crash is still surfaced to the previous handler below.
+            }
             previous?.uncaughtException(thread, throwable)
         }
     }
