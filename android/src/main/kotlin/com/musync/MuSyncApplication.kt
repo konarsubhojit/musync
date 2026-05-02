@@ -14,23 +14,38 @@ class MuSyncApplication : Application() {
     }
 
     /**
-     * Forwards uncaught exceptions to [AppLogger] before delegating to the previously
-     * installed handler so the crash is still reported to the system / Logcat.
+     * Installs the crash handler, delegating construction to [buildCrashHandler] so
+     * the handler logic can be exercised by unit tests independently of Android lifecycle.
      */
     private fun installCrashHandler() {
-        val previous = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            try {
-                AppLogger.e(TAG, "Uncaught exception on thread ${thread.name}", throwable)
-            } catch (_: Throwable) {
-                // Defensive: if AppLogger itself throws, ignore so the original
-                // crash is still surfaced to the previous handler below.
-            }
-            previous?.uncaughtException(thread, throwable)
-        }
+        Thread.setDefaultUncaughtExceptionHandler(
+            buildCrashHandler(Thread.getDefaultUncaughtExceptionHandler()),
+        )
     }
 
-    private companion object {
-        const val TAG = "MuSyncApplication"
+    companion object {
+        internal const val TAG = "MuSyncApplication"
+
+        /**
+         * Builds a [Thread.UncaughtExceptionHandler] that logs crashes via [AppLogger]
+         * and then delegates to [previous].
+         *
+         * Extracted from [installCrashHandler] so tests can exercise the real
+         * implementation without duplicating the handler logic.
+         *
+         * The [AppLogger] call is wrapped in a `try/catch` so that any logger failure
+         * (e.g. an IO error) never prevents [previous] from being invoked—the original
+         * crash is always surfaced.
+         */
+        internal fun buildCrashHandler(previous: Thread.UncaughtExceptionHandler?): Thread.UncaughtExceptionHandler =
+            Thread.UncaughtExceptionHandler { thread, throwable ->
+                try {
+                    AppLogger.e(TAG, "Uncaught exception on thread ${thread.name}", throwable)
+                } catch (_: Throwable) {
+                    // Defensive: if AppLogger itself throws, ignore so the original
+                    // crash is still surfaced to the previous handler below.
+                }
+                previous?.uncaughtException(thread, throwable)
+            }
     }
 }

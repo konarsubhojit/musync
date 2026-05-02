@@ -10,10 +10,9 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * Verifies the crash-handler logic that [MuSyncApplication.installCrashHandler] installs.
+ * Verifies the crash-handler logic built by [MuSyncApplication.buildCrashHandler].
  *
- * We test the handler behaviour directly (without instantiating the Android Application class)
- * by replicating the same lambda and asserting that:
+ * Tests use the real handler implementation (no duplication) and assert that:
  *  1. The exception is written to AppLogger (and therefore to the on-disk log files).
  *  2. The previous handler is still invoked afterwards.
  *  3. If AppLogger itself throws, the previous handler is still invoked (defensive path).
@@ -38,19 +37,12 @@ class MuSyncApplicationTest {
     @Test
     fun `crash handler logs the exception and delegates to the previous handler`() {
         var previousHandlerCalled = false
-        val previousHandler = Thread.UncaughtExceptionHandler { _, _ ->
-            previousHandlerCalled = true
-        }
-
-        // Mirror the lambda installed by MuSyncApplication.installCrashHandler().
-        val handler = Thread.UncaughtExceptionHandler { thread, throwable ->
-            try {
-                AppLogger.e("MuSyncApplication", "Uncaught exception on thread ${thread.name}", throwable)
-            } catch (_: Throwable) {
-                // Defensive – swallow logger errors.
+        val previousHandler =
+            Thread.UncaughtExceptionHandler { _, _ ->
+                previousHandlerCalled = true
             }
-            previousHandler.uncaughtException(thread, throwable)
-        }
+
+        val handler = MuSyncApplication.buildCrashHandler(previousHandler)
 
         val exception = RuntimeException("test crash")
         handler.uncaughtException(Thread.currentThread(), exception)
@@ -72,18 +64,12 @@ class MuSyncApplicationTest {
         AppLogger.setLogsDirectoryForTesting(null)
 
         var previousHandlerCalled = false
-        val previousHandler = Thread.UncaughtExceptionHandler { _, _ ->
-            previousHandlerCalled = true
-        }
-
-        val handler = Thread.UncaughtExceptionHandler { thread, throwable ->
-            try {
-                AppLogger.e("MuSyncApplication", "Uncaught exception on thread ${thread.name}", throwable)
-            } catch (_: Throwable) {
-                // Defensive – swallow logger errors.
+        val previousHandler =
+            Thread.UncaughtExceptionHandler { _, _ ->
+                previousHandlerCalled = true
             }
-            previousHandler.uncaughtException(thread, throwable)
-        }
+
+        val handler = MuSyncApplication.buildCrashHandler(previousHandler)
 
         handler.uncaughtException(Thread.currentThread(), RuntimeException("silent crash"))
 

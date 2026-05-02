@@ -78,12 +78,13 @@ android {
     val debugKeyAlias = System.getenv("DEBUG_KEY_ALIAS")?.takeIf { it.isNotBlank() }
     val debugKeyPassword = System.getenv("DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
 
-    val hasCustomDebugSigning = listOf(
-        debugKeystorePath,
-        debugKeystorePassword,
-        debugKeyAlias,
-        debugKeyPassword,
-    ).all { it != null }
+    val hasCustomDebugSigning =
+        listOf(
+            debugKeystorePath,
+            debugKeystorePassword,
+            debugKeyAlias,
+            debugKeyPassword,
+        ).all { it != null }
 
     if (hasCustomDebugSigning) {
         signingConfigs {
