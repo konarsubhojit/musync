@@ -48,6 +48,8 @@ fun YouTubePlayerComposable(
                     .build()
 
             YouTubePlayerView(context).also { view ->
+                // Required by the library when calling initialize(...) manually.
+                view.enableAutomaticInitialization = false
                 view.initialize(
                     object : AbstractYouTubePlayerListener() {
                         override fun onReady(youTubePlayer: YouTubePlayer) {
