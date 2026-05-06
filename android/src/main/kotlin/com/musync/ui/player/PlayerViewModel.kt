@@ -7,8 +7,10 @@ import com.musync.BuildConfig
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -33,6 +35,7 @@ class PlayerViewModel
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
         private val playbackSyncReceiver: PlaybackSyncReceiver,
+        private val youTubeSearchRepository: YouTubeSearchRepository,
     ) : ViewModel() {
         companion object {
             /**
@@ -348,13 +351,23 @@ class PlayerViewModel
                     addToQueueSheetVisible = true,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }
 
         /** Dismisses the "Add to queue" bottom sheet. */
         fun onAddToQueueDismissed() {
-            _uiState.update { it.copy(addToQueueSheetVisible = false) }
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
         }
 
         /** Updates the input field of the bottom sheet. */
@@ -388,6 +401,59 @@ class PlayerViewModel
                     addToQueueSheetVisible = false,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
+        }
+
+        /**
+         * Launches a YouTube search for the current [PlayerUiState.addToQueueInput].
+         * Stores the results in [PlayerUiState.searchResults] on success, or sets
+         * [PlayerUiState.searchError] on failure.  No-op when the input is blank.
+         */
+        fun onSearch() {
+            val query = _uiState.value.addToQueueInput.trim()
+            if (query.isEmpty()) return
+            _uiState.update { it.copy(isSearching = true, searchError = false, searchResults = emptyList()) }
+            viewModelScope.launch {
+                val result = youTubeSearchRepository.search(query)
+                _uiState.update { state ->
+                    result.fold(
+                        onSuccess = { items ->
+                            state.copy(isSearching = false, searchResults = items, searchError = false)
+                        },
+                        onFailure = {
+                            state.copy(isSearching = false, searchError = true)
+                        },
+                    )
+                }
+            }
+        }
+
+        /**
+         * Adds the given YouTube search result directly to the queue and closes the
+         * "Add to queue" bottom sheet.
+         */
+        fun onSearchResultSelected(result: YouTubeSearchResult) {
+            musicRepository.addToQueue(
+                Track(
+                    id = UUID.randomUUID().toString(),
+                    title = result.title,
+                    artist = result.channelTitle,
+                    youtubeVideoId = result.videoId,
+                    durationMs = 0L,
+                ),
+            )
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    addToQueueInput = "",
+                    addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }

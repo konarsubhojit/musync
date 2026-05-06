@@ -40,8 +40,11 @@
     <string name="player_participant_count">%1$d listening</string>
     <string name="player_queue_empty">Queue is empty. Tap + to add a track.</string>
     <string name="player_add_to_queue">Add to queue</string>
-    <string name="player_add_queue_label">Add YouTube link</string>
+    <string name="player_add_queue_label">Search YouTube or paste a link</string>
     <string name="player_add_queue_confirm">Add</string>
+    <string name="player_search_youtube">Search YouTube</string>
+    <string name="player_search_results">Search results</string>
+    <string name="player_search_error">Search failed. Check your connection and try again.</string>
     <string name="player_leave_dialog_title">Leave room?</string>
     <string name="player_leave_dialog_message_guest">You will be disconnected from this listening session.</string>
     <string name="player_leave_dialog_message_host">You can leave the room or end the session for all participants.</string>
