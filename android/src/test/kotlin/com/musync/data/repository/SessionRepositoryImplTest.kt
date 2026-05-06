@@ -3,6 +3,11 @@ package com.musync.data.repository
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.socket.client.Socket
+import io.socket.emitter.Emitter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -16,6 +21,10 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionRepositoryImplTest {
     private lateinit var repository: SessionRepositoryImpl
+    private lateinit var socket: Socket
+
+    /** Stores the ROOM_CLOSED listener registered by the repository so tests can invoke it. */
+    private var roomClosedListener: Emitter.Listener? = null
 
     private val hostSession =
         Session(
@@ -33,7 +42,14 @@ class SessionRepositoryImplTest {
 
     @Before
     fun setUp() {
-        repository = SessionRepositoryImpl()
+        socket = mockk(relaxed = true)
+        // Capture the ROOM_CLOSED listener so tests can simulate the server event.
+        val listenerSlot = slot<Emitter.Listener>()
+        every { socket.on("ROOM_CLOSED", capture(listenerSlot)) } answers {
+            roomClosedListener = listenerSlot.captured
+            socket
+        }
+        repository = SessionRepositoryImpl(socket)
     }
 
     // ------------------------------------------------------------------
@@ -183,5 +199,25 @@ class SessionRepositoryImplTest {
                 }
 
             assertTrue("No events expected after leaving session", emitted.isEmpty())
+        }
+
+    // ------------------------------------------------------------------
+    // ROOM_CLOSED server event emits SyncEvent.RoomClosed
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits RoomClosed and clears session when ROOM_CLOSED server event is received`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val emitted =
+                collectEvents {
+                    // Simulate the server broadcasting ROOM_CLOSED
+                    roomClosedListener?.call()
+                }
+
+            assertEquals(1, emitted.size)
+            assertEquals(SyncEvent.RoomClosed, emitted.first())
+            assertTrue("Session should be cleared after ROOM_CLOSED", repository.session.value == null)
         }
 }

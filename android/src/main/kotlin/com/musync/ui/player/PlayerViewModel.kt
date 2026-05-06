@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.BuildConfig
 import com.musync.data.model.Session
+import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
@@ -88,11 +89,20 @@ class PlayerViewModel
                         localUserId = UUID.randomUUID().toString(),
                     ),
                 )
-                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId") }
+                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = false) }
             } else {
-                // Host mode: generate a new session ID so the invite link can be shared.
+                // Host mode: generate a new session ID and join as the host so that
+                // leave_room is emitted when the host navigates away.
                 val sessionId = UUID.randomUUID().toString()
-                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$sessionId") }
+                val userId = UUID.randomUUID().toString()
+                sessionRepository.joinSession(
+                    Session(
+                        sessionId = sessionId,
+                        hostId = userId,
+                        localUserId = userId,
+                    ),
+                )
+                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$sessionId", isHost = true) }
             }
 
             // Seed the videoId immediately when the host supplied one so the
@@ -121,9 +131,25 @@ class PlayerViewModel
                 }
             }
 
+            // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
+            viewModelScope.launch {
+                sessionRepository.events.collect { event ->
+                    if (event is SyncEvent.RoomClosed) {
+                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    }
+                }
+            }
+
             // Start the initial auto-hide timer so the overlay controls fade
             // out shortly after the screen appears, mirroring the YouTube app.
             scheduleControlsHide()
+        }
+
+        override fun onCleared() {
+            super.onCleared()
+            // Emit leave_room whenever the ViewModel is destroyed (e.g. system back
+            // gesture that bypasses the confirmation dialog).
+            sessionRepository.leaveSession()
         }
 
         fun onPlaybackStateChanged(
@@ -239,5 +265,46 @@ class PlayerViewModel
                     addToQueueError = false,
                 )
             }
+        }
+
+        /**
+         * Called when the user taps the back button.  Shows a confirmation dialog
+         * rather than navigating immediately, so the user can confirm they want to
+         * leave the room.
+         */
+        fun onBackPressed() {
+            _uiState.update { it.copy(showLeaveConfirmDialog = true) }
+        }
+
+        /** Called when the user dismisses the leave-room confirmation dialog. */
+        fun onLeaveRoomDismissed() {
+            _uiState.update { it.copy(showLeaveConfirmDialog = false) }
+        }
+
+        /**
+         * Called when the user confirms they want to leave the room.
+         * Emits `leave_room` to the server and signals the UI to navigate back.
+         */
+        fun onLeaveRoomConfirmed() {
+            sessionRepository.leaveSession()
+            _uiState.update { it.copy(showLeaveConfirmDialog = false, navigateBack = true) }
+        }
+
+        /**
+         * Called when the host confirms they want to end the session for all participants.
+         * Emits `end_session` to the server (which broadcasts `ROOM_CLOSED` to everyone)
+         * and signals the UI to navigate back.
+         */
+        fun onEndSessionForAllConfirmed() {
+            sessionRepository.endSession()
+            _uiState.update { it.copy(showLeaveConfirmDialog = false, navigateBack = true) }
+        }
+
+        /**
+         * Called by the UI once it has consumed the [PlayerUiState.navigateBack] signal.
+         * Resets the flag so it is not re-consumed on recomposition.
+         */
+        fun onNavigatedBack() {
+            _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
         }
     }
