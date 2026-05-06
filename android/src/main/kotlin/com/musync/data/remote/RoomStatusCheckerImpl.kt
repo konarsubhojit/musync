@@ -1,11 +1,14 @@
 package com.musync.data.remote
 
 import com.musync.BuildConfig
+import com.musync.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONException
 import org.json.JSONObject
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,8 +35,16 @@ class RoomStatusCheckerImpl
                         active = json.getBoolean("active"),
                         listenerCount = json.getInt("listenerCount"),
                     )
-                } catch (_: Exception) {
+                } catch (e: IOException) {
+                    AppLogger.w(TAG, "Network error fetching status for room $roomId: $e")
+                    null
+                } catch (e: JSONException) {
+                    AppLogger.w(TAG, "Unexpected response shape for room $roomId: $e")
                     null
                 }
             }
+
+        private companion object {
+            const val TAG = "RoomStatusCheckerImpl"
+        }
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.musync.data.model.RecentRoom
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,7 +43,7 @@ class RecentRoomsRepositoryImpl
                         lastJoinedAt = obj.getLong("lastJoinedAt"),
                     )
                 }
-            } catch (_: Exception) {
+            } catch (_: JSONException) {
                 emptyList()
             }
         }

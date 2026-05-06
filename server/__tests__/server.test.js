@@ -426,7 +426,7 @@ describe('MuSync server', () => {
     });
 
     it('returns 400 for an invalid roomId', async () => {
-      const res = await request(app).get('/room/' + encodeURIComponent('<bad>')+'/status');
+      const res = await request(app).get('/room/' + encodeURIComponent('<bad>') + '/status');
       expect(res.status).toBe(400);
     });
   });
