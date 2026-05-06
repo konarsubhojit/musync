@@ -193,9 +193,14 @@ class PlayerViewModel
          * Called when the YouTube player state changes.
          *
          * For the host, this emits the corresponding socket event (PLAY/PAUSE) and manages
-         * the periodic heartbeat coroutine.  PAUSE is only emitted when transitioning from a
-         * PLAYING state; non-playing states like ENDED, UNSTARTED, and CUED are ignored so
-         * they do not falsely trigger a PAUSE broadcast.
+         * the periodic heartbeat coroutine.  A PAUSE is only emitted when transitioning from a
+         * PLAYING state (`wasPlaying = true`), preventing non-user-initiated state changes such
+         * as UNSTARTED and CUED from broadcasting a PAUSE to the room.
+         *
+         * Note: ENDED (end of track) and explicit PAUSED both flow through the `wasPlaying`
+         * branch, so exactly one PAUSE event is emitted in either case. During BUFFERING,
+         * `wasPlaying` is intentionally preserved so that a subsequent PAUSED event still
+         * results in a PAUSE emission.
          */
         fun onPlaybackStateChanged(
             isPlaying: Boolean,
@@ -213,16 +218,17 @@ class PlayerViewModel
                 }
                 isBuffering -> {
                     // Buffering is a transient state — stop the heartbeat but do not emit PAUSE.
+                    // wasPlaying is preserved so a subsequent PAUSED event can still be emitted.
                     stopHeartbeat()
                 }
                 wasPlaying -> {
-                    // True PAUSED transition: player was playing and is now paused by the user.
+                    // True stop: player was playing and is now paused or the track ended.
                     wasPlaying = false
                     syncEmitter.emitPause(roomId, positionMs)
                     stopHeartbeat()
                 }
                 else -> {
-                    // ENDED, UNSTARTED, CUED, or a repeat non-playing callback — not a pause action.
+                    // UNSTARTED, CUED, or a repeat non-playing callback — not a meaningful stop.
                     wasPlaying = false
                     stopHeartbeat()
                 }

@@ -305,16 +305,6 @@ class PlayerViewModelTest {
         }
 
     @Test
-    fun `host does not emit PAUSE when state changes to non-playing without prior PLAYING`() =
-        runTest {
-            val emitter = mockk<SyncEmitter>(relaxed = true)
-            val viewModel = buildHostViewModel(syncEmitter = emitter)
-            // ENDED/UNSTARTED/CUED: isPlaying=false, isBuffering=false, no prior PLAYING
-            viewModel.onPlaybackStateChanged(isPlaying = false)
-            verify(exactly = 0) { emitter.emitPause(any(), any()) }
-        }
-
-    @Test
     fun `host does not emit PAUSE when buffering`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
@@ -326,22 +316,26 @@ class PlayerViewModelTest {
         }
 
     @Test
-    fun `host does not emit PAUSE when video ends (ENDED state)`() =
+    fun `host does not emit PAUSE when video ends without prior PLAYING`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
             val viewModel = buildHostViewModel(syncEmitter = emitter)
-            // Simulate ENDED: was playing, then ENDED fires as non-playing, non-buffering
-            // (but ENDED is different from PAUSED - no explicit pause emitted)
-            // This test verifies ENDED does not produce a second PAUSE after heartbeat stops
-            viewModel.onPlaybackStateChanged(isPlaying = true)
-            // Simulate ENDED via the same onPlaybackStateChanged call as the screen does:
-            // when state == ENDED, isPlaying=false and isBuffering=false.
-            // After PLAYING, wasPlaying=true, so PAUSE would be emitted once.
-            // This is intentional for ENDED: emitPause is emitted once, then wasPlaying resets.
-            viewModel.onPlaybackStateChanged(isPlaying = false) // PAUSED/ENDED
-            // Calling again simulates a second non-playing callback (e.g. CUED after ENDED)
+            // Simulate ENDED/CUED/UNSTARTED arriving without a prior PLAYING callback
+            // (e.g. player initialises in a non-playing state at startup).
             viewModel.onPlaybackStateChanged(isPlaying = false)
-            // emitPause should only be called once (wasPlaying guard prevents second call)
+            verify(exactly = 0) { emitter.emitPause(any(), any()) }
+        }
+
+    @Test
+    fun `host emits PAUSE exactly once when video ends after PLAYING`() =
+        runTest {
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(syncEmitter = emitter)
+            // Simulate track playing then reaching ENDED.
+            viewModel.onPlaybackStateChanged(isPlaying = true)
+            viewModel.onPlaybackStateChanged(isPlaying = false) // ENDED or PAUSED
+            // A repeat non-playing callback (e.g. CUED after ENDED) must not emit again.
+            viewModel.onPlaybackStateChanged(isPlaying = false)
             verify(exactly = 1) { emitter.emitPause(any(), any()) }
         }
 

@@ -113,8 +113,16 @@ fun PlayerScreen(
     LaunchedEffect(youTubePlayer) {
         val player = youTubePlayer ?: return@LaunchedEffect
         viewModel.attachRemotePlayer(
-            onPlay = { posMs -> player.seekTo(posMs / 1000f); player.play() },
-            onPause = { posMs -> player.seekTo(posMs / 1000f); player.pause() },
+            onPlay = { posMs ->
+                val posSeconds = posMs / 1000f
+                player.seekTo(posSeconds)
+                player.play()
+            },
+            onPause = { posMs ->
+                val posSeconds = posMs / 1000f
+                player.seekTo(posSeconds)
+                player.pause()
+            },
             onSeek = { posMs -> player.seekTo(posMs / 1000f) },
         )
     }
