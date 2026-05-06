@@ -201,7 +201,7 @@ function createApp(options = {}) {
   /**
    * Sanitises a display name supplied by a client.
    * Trims whitespace and truncates to 50 characters.  Returns an empty string
-   * if the value is not a non-empty string so callers always get a safe value.
+   * if the value is not a string so callers always get a safe value.
    * @param {unknown} name
    * @returns {string}
    */
@@ -244,7 +244,7 @@ function createApp(options = {}) {
       }));
       io.to(roomId).emit('PARTICIPANTS_UPDATED', { participants });
     } catch (err) {
-      console.error(`[socket] broadcastParticipants failed  room=${roomId}:`, err);
+      console.error(`[socket] broadcastParticipants failed room=${roomId}:`, err);
     }
   }
 

@@ -573,7 +573,7 @@ private fun RoomTab(
             participants.forEach { participant ->
                 val name = participant.displayName.ifBlank { stringResource(R.string.player_participant_anonymous) }
                 ParticipantRow(
-                    initials = name.take(1).uppercase(),
+                    initials = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
                     displayName = name,
                 )
             }
