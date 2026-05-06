@@ -17,6 +17,12 @@
     <string name="home_empty_title">No active room</string>
     <string name="home_empty_subtitle">Create or join a room to start listening together</string>
     <string name="home_settings">Settings</string>
+    <string name="home_recent_rooms">Recent Rooms</string>
+    <string name="home_recent_rooms_clear">Clear</string>
+    <string name="home_recent_room_rejoin">Rejoin</string>
+    <string name="home_recent_room_status_checking">Checking status…</string>
+    <string name="home_recent_room_status_active">Active · %1$d listening</string>
+    <string name="home_recent_room_status_inactive">Inactive</string>
 
     <!-- Create room screen -->
     <string name="create_room_title">New Room</string>

@@ -2,10 +2,12 @@ package com.musync.ui.player
 
 import androidx.lifecycle.SavedStateHandle
 import com.musync.data.model.PlayerState
+import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
@@ -445,7 +447,15 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
-    ) = PlayerViewModel(SavedStateHandle(), musicRepository, sessionRepository, syncEmitter, playbackSyncReceiver)
+        recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
+    ) = PlayerViewModel(
+        SavedStateHandle(),
+        musicRepository,
+        sessionRepository,
+        syncEmitter,
+        playbackSyncReceiver,
+        recentRoomsRepository,
+    )
 
     /**
      * Builds a [PlayerViewModel] with the given [roomId] injected via [SavedStateHandle].
@@ -457,12 +467,14 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+        recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
         sessionRepository,
         syncEmitter,
         playbackSyncReceiver,
+        recentRoomsRepository,
     )
 
     // --- Fake repositories ---
@@ -506,5 +518,16 @@ class PlayerViewModelTest {
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
         }
+    }
+
+    private class FakeRecentRoomsRepository : RecentRoomsRepository {
+        override fun getRecentRooms() = emptyList<RecentRoom>()
+
+        override fun addOrUpdateRoom(
+            roomId: String,
+            displayName: String,
+        ) = Unit
+
+        override fun clearHistory() = Unit
     }
 }
