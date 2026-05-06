@@ -648,8 +648,8 @@ class PlayerViewModelTest {
             _events.tryEmit(SyncEvent.RoomClosed)
         }
 
-        fun emitPlayNext(sessionId: String = "test-session") {
-            _events.tryEmit(SyncEvent.PlayNext(sessionId))
+        fun emitPlayNext() {
+            _events.tryEmit(SyncEvent.PlayNext("test-session"))
         }
     }
 }
