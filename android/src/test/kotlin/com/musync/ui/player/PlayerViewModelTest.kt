@@ -81,8 +81,7 @@ class PlayerViewModelTest {
             val viewModel = buildHostViewModel()
             viewModel.onPlaybackStateChanged(isPlaying = true)
             assertTrue(viewModel.uiState.value.isPlaying)
-            // Stop heartbeat so advanceUntilIdle() (called by runTest) can finish.
-            viewModel.onPlaybackStateChanged(isPlaying = false)
+            viewModel.onPlaybackStateChanged(isPlaying = false) // stop heartbeat before runTest finishes
         }
 
     @Test
@@ -205,8 +204,7 @@ class PlayerViewModelTest {
             val viewModel = buildHostViewModel(syncEmitter = emitter)
             viewModel.onPlaybackStateChanged(isPlaying = true)
             verify { emitter.emitPlay(any(), any()) }
-            // Stop heartbeat so advanceUntilIdle() (called by runTest) can finish.
-            viewModel.onPlaybackStateChanged(isPlaying = false)
+            viewModel.onPlaybackStateChanged(isPlaying = false) // stop heartbeat before runTest finishes
         }
 
     @Test
