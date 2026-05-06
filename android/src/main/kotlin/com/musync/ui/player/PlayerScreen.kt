@@ -108,6 +108,25 @@ fun PlayerScreen(
         }
     }
 
+    // Wire the remote-player callbacks for guests whenever the YouTube player becomes available.
+    // This allows the host's PLAY/PAUSE/SEEK commands to be applied to the local player.
+    LaunchedEffect(youTubePlayer) {
+        val player = youTubePlayer ?: return@LaunchedEffect
+        viewModel.attachRemotePlayer(
+            onPlay = { posMs ->
+                val posSeconds = posMs / 1000f
+                player.seekTo(posSeconds)
+                player.play()
+            },
+            onPause = { posMs ->
+                val posSeconds = posMs / 1000f
+                player.seekTo(posSeconds)
+                player.pause()
+            },
+            onSeek = { posMs -> player.seekTo(posMs / 1000f) },
+        )
+    }
+
     if (uiState.showLeaveConfirmDialog) {
         LeaveRoomConfirmDialog(
             isHost = uiState.isHost,
@@ -195,6 +214,7 @@ fun PlayerScreen(
                     },
                     onSeek = { second ->
                         viewModel.onControlsInteraction()
+                        viewModel.onUserSeeked((second * 1000).toLong())
                         youTubePlayer?.seekTo(second)
                     },
                 )
