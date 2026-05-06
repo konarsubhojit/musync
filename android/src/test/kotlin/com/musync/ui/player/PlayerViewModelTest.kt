@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -438,6 +439,79 @@ class PlayerViewModelTest {
             verify(exactly = 0) { receiver.attachPlayer(any(), any(), any()) }
         }
 
+    // --- Participant count ---
+
+    @Test
+    fun `MembersSnapshot event sets participantCount`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitMembersSnapshot(5)
+            advanceUntilIdle()
+            assertEquals(5, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerJoined event increments participantCount`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            val initialCount = viewModel.uiState.value.participantCount
+            sessionRepo.emitPeerJoined()
+            advanceUntilIdle()
+            assertEquals(initialCount + 1, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerLeft event decrements participantCount but never below 1`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            // Emit a PeerLeft when count is already 1 — should clamp to 1
+            sessionRepo.emitPeerLeft()
+            advanceUntilIdle()
+            assertEquals(1, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerJoined event sets presenceEvent to PeerJoined`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerJoined()
+            // runCurrent flushes the event collection without advancing past the reset timer.
+            runCurrent()
+            assertEquals(PresenceEvent.PeerJoined, viewModel.uiState.value.presenceEvent)
+        }
+
+    @Test
+    fun `PeerLeft event sets presenceEvent to PeerLeft`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerLeft()
+            runCurrent()
+            assertEquals(PresenceEvent.PeerLeft, viewModel.uiState.value.presenceEvent)
+        }
+
+    @Test
+    fun `presenceEvent resets to null after PRESENCE_EVENT_DURATION_MS`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerJoined()
+            runCurrent()
+            assertNotNull(viewModel.uiState.value.presenceEvent)
+            advanceTimeBy(PlayerViewModel.PRESENCE_EVENT_DURATION_MS + 1)
+            assertNull(viewModel.uiState.value.presenceEvent)
+        }
+
     // --- Helpers ---
 
     private fun buildHostViewModel(
@@ -505,6 +579,18 @@ class PlayerViewModelTest {
 
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
+        }
+
+        fun emitMembersSnapshot(count: Int) {
+            _events.tryEmit(SyncEvent.MembersSnapshot(count))
+        }
+
+        fun emitPeerJoined() {
+            _events.tryEmit(SyncEvent.PeerJoined)
+        }
+
+        fun emitPeerLeft() {
+            _events.tryEmit(SyncEvent.PeerLeft)
         }
     }
 }

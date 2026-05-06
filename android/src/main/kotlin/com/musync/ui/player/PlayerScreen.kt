@@ -96,6 +96,22 @@ fun PlayerScreen(
         }
     }
 
+    val peerJoinedMessage = stringResource(R.string.player_peer_joined)
+    val peerLeftMessage = stringResource(R.string.player_peer_left)
+    LaunchedEffect(uiState.presenceEvent) {
+        when (uiState.presenceEvent) {
+            PresenceEvent.PeerJoined -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerJoinedMessage)
+            }
+            PresenceEvent.PeerLeft -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerLeftMessage)
+            }
+            null -> { /* nothing to show */ }
+        }
+    }
+
     val roomClosedMessage = stringResource(R.string.player_room_closed_by_host)
     LaunchedEffect(uiState.navigateBack) {
         if (uiState.navigateBack) {
@@ -506,101 +522,122 @@ private fun RoomTab(
     onCopyInvite: () -> Unit,
     onShareInvite: () -> Unit,
 ) {
-    Column(
+    LazyColumn(
         modifier =
             Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Invite card
         if (inviteLink.isNotEmpty()) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.player_invite_card_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = inviteLink,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onCopyInvite) {
-                            Icon(
-                                Icons.Filled.ContentCopy,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.size(6.dp))
-                            Text(stringResource(R.string.player_copy_link))
-                        }
-                        TextButton(onClick = onShareInvite) {
-                            Icon(
-                                Icons.Filled.Share,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.size(6.dp))
-                            Text(stringResource(R.string.share_invite))
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = stringResource(R.string.player_invite_card_title),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = inviteLink,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onCopyInvite) {
+                                Icon(
+                                    Icons.Filled.ContentCopy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.size(6.dp))
+                                Text(stringResource(R.string.player_copy_link))
+                            }
+                            TextButton(onClick = onShareInvite) {
+                                Icon(
+                                    Icons.Filled.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.size(6.dp))
+                                Text(stringResource(R.string.share_invite))
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Listeners section
-        Text(
-            text = stringResource(R.string.player_participants_title),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth(),
+        // Listeners section header
+        item {
+            Text(
+                text = stringResource(R.string.player_participants_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+
+        // Local user ("You") row
+        item {
+            ParticipantRow(
+                initial = stringResource(R.string.player_participant_you_initial),
+                name = stringResource(R.string.player_participant_you),
+            )
+        }
+
+        // One row per remote listener
+        items(count = participantCount - 1, key = { index -> "listener-$index" }) { index ->
+            ParticipantRow(
+                initial = stringResource(R.string.player_listener_initial),
+                name = stringResource(R.string.player_listener_name, index + 1),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ParticipantRow(
+    initial: String,
+    name: String,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                modifier =
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier =
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Y",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                Spacer(Modifier.size(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.player_participant_you),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = stringResource(R.string.player_participant_count, participantCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    text = initial,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
             }
+            Spacer(Modifier.size(12.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

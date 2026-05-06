@@ -11,4 +11,16 @@ sealed class SyncEvent {
 
     /** Emitted when the host ends the session for all participants. */
     data object RoomClosed : SyncEvent()
+
+    /** Emitted when a remote peer joins the room. */
+    data object PeerJoined : SyncEvent()
+
+    /** Emitted when a remote peer leaves the room. */
+    data object PeerLeft : SyncEvent()
+
+    /**
+     * Emitted once when joining a room, providing the initial total member count
+     * (including the local user).
+     */
+    data class MembersSnapshot(val count: Int) : SyncEvent()
 }

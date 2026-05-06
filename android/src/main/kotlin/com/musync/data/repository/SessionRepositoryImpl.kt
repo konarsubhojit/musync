@@ -4,6 +4,7 @@ import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.sync.SocketEvents
+import io.socket.client.Ack
 import io.socket.client.Socket
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,6 +51,12 @@ class SessionRepositoryImpl
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
             }
+            socket.on(SocketEvents.PEER_JOINED) {
+                _events.tryEmit(SyncEvent.PeerJoined)
+            }
+            socket.on(SocketEvents.PEER_LEFT) {
+                _events.tryEmit(SyncEvent.PeerLeft)
+            }
         }
 
         override val session: StateFlow<Session?> = _session.asStateFlow()
@@ -67,7 +75,15 @@ class SessionRepositoryImpl
             playNextEmitted.set(false)
             _session.value = session
             socket.connect()
-            socket.emit(SocketEvents.JOIN_ROOM, session.sessionId)
+            socket.emit(
+                SocketEvents.JOIN_ROOM,
+                session.sessionId,
+                Ack { args ->
+                    val data = (args.getOrNull(0) as? JSONObject)
+                    val memberCount = data?.optInt("memberCount", 1) ?: 1
+                    _events.tryEmit(SyncEvent.MembersSnapshot(memberCount))
+                },
+            )
         }
 
         override fun leaveSession() {

@@ -55,6 +55,9 @@ class PlayerViewModel
             /** Duration (ms) to show the "link copied" feedback in the UI. */
             internal const val INVITE_COPIED_FEEDBACK_DURATION_MS = 2_000L
 
+            /** Duration (ms) to show a peer-presence (join/leave) notification. */
+            internal const val PRESENCE_EVENT_DURATION_MS = 3_000L
+
             /** Duration (ms) before the playback overlay controls auto-hide after a tap. */
             internal const val CONTROLS_AUTO_HIDE_MS = 3_000L
 
@@ -79,6 +82,9 @@ class PlayerViewModel
 
         /** Tracks the active periodic heartbeat emission job. */
         private var heartbeatJob: Job? = null
+
+        /** Tracks the active job that clears [PlayerUiState.presenceEvent] after a delay. */
+        private var presenceResetJob: Job? = null
 
         /**
          * `true` only when the local player was most recently in a PLAYING state.
@@ -169,8 +175,20 @@ class PlayerViewModel
             // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
-                    if (event is SyncEvent.RoomClosed) {
-                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    when (event) {
+                        is SyncEvent.RoomClosed ->
+                            _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        is SyncEvent.MembersSnapshot ->
+                            _uiState.update { it.copy(participantCount = event.count) }
+                        is SyncEvent.PeerJoined -> {
+                            val newCount = _uiState.value.participantCount + 1
+                            showPresenceEvent(PresenceEvent.PeerJoined, newCount)
+                        }
+                        is SyncEvent.PeerLeft -> {
+                            val newCount = (_uiState.value.participantCount - 1).coerceAtLeast(1)
+                            showPresenceEvent(PresenceEvent.PeerLeft, newCount)
+                        }
+                        else -> Unit
                     }
                 }
             }
@@ -330,6 +348,23 @@ class PlayerViewModel
         private fun stopHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob = null
+        }
+
+        /**
+         * Updates the participant count and surfaces a transient [PresenceEvent] notification.
+         * Cancels any pending reset job so that back-to-back events each get a fresh timer.
+         */
+        private fun showPresenceEvent(
+            event: PresenceEvent,
+            newCount: Int,
+        ) {
+            presenceResetJob?.cancel()
+            _uiState.update { it.copy(participantCount = newCount, presenceEvent = event) }
+            presenceResetJob =
+                viewModelScope.launch {
+                    delay(PRESENCE_EVENT_DURATION_MS)
+                    _uiState.update { it.copy(presenceEvent = null) }
+                }
         }
 
         private fun scheduleControlsHide() {

@@ -227,8 +227,11 @@ function createApp(options = {}) {
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
       if (typeof ack === 'function') {
         try {
-          const roomData = await roomStore.getRoom(roomId);
-          ack({ ok: true, state: roomData ?? null });
+          const [roomData, sockets] = await Promise.all([
+            roomStore.getRoom(roomId),
+            io.in(roomId).fetchSockets(),
+          ]);
+          ack({ ok: true, state: roomData ?? null, memberCount: sockets.length });
         } catch (err) {
           console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
           ack({ error: 'failed to load room state' });

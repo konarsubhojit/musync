@@ -26,6 +26,12 @@ class SessionRepositoryImplTest {
     /** Stores the ROOM_CLOSED listener registered by the repository so tests can invoke it. */
     private var roomClosedListener: Emitter.Listener? = null
 
+    /** Stores the peer_joined listener registered by the repository so tests can invoke it. */
+    private var peerJoinedListener: Emitter.Listener? = null
+
+    /** Stores the peer_left listener registered by the repository so tests can invoke it. */
+    private var peerLeftListener: Emitter.Listener? = null
+
     private val hostSession =
         Session(
             sessionId = "session-1",
@@ -43,10 +49,20 @@ class SessionRepositoryImplTest {
     @Before
     fun setUp() {
         socket = mockk(relaxed = true)
-        // Capture the ROOM_CLOSED listener so tests can simulate the server event.
-        val listenerSlot = slot<Emitter.Listener>()
-        every { socket.on("ROOM_CLOSED", capture(listenerSlot)) } answers {
-            roomClosedListener = listenerSlot.captured
+        // Capture socket listeners so tests can simulate server events.
+        val roomClosedSlot = slot<Emitter.Listener>()
+        every { socket.on("ROOM_CLOSED", capture(roomClosedSlot)) } answers {
+            roomClosedListener = roomClosedSlot.captured
+            socket
+        }
+        val peerJoinedSlot = slot<Emitter.Listener>()
+        every { socket.on("peer_joined", capture(peerJoinedSlot)) } answers {
+            peerJoinedListener = peerJoinedSlot.captured
+            socket
+        }
+        val peerLeftSlot = slot<Emitter.Listener>()
+        every { socket.on("peer_left", capture(peerLeftSlot)) } answers {
+            peerLeftListener = peerLeftSlot.captured
             socket
         }
         repository = SessionRepositoryImpl(socket)
@@ -219,5 +235,39 @@ class SessionRepositoryImplTest {
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.RoomClosed, emitted.first())
             assertTrue("Session should be cleared after ROOM_CLOSED", repository.session.value == null)
+        }
+
+    // ------------------------------------------------------------------
+    // PEER_JOINED server event emits SyncEvent.PeerJoined
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits PeerJoined when peer_joined server event is received`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val emitted =
+                collectEvents {
+                    peerJoinedListener?.call()
+                }
+
+            assertTrue("Expected at least one PeerJoined event", emitted.any { it is SyncEvent.PeerJoined })
+        }
+
+    // ------------------------------------------------------------------
+    // PEER_LEFT server event emits SyncEvent.PeerLeft
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits PeerLeft when peer_left server event is received`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val emitted =
+                collectEvents {
+                    peerLeftListener?.call()
+                }
+
+            assertTrue("Expected at least one PeerLeft event", emitted.any { it is SyncEvent.PeerLeft })
         }
 }
