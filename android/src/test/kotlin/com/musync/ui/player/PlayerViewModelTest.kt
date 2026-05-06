@@ -173,15 +173,37 @@ class PlayerViewModelTest {
         }
 
     @Test
-    fun `does not join session when roomId is absent`() =
+    fun `joins session as host when roomId is absent`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), sessionRepo)
-            assertNull(sessionRepo.session.value)
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            // Host: localUserId == hostId
+            assertEquals(joined!!.localUserId, joined.hostId)
         }
 
     @Test
-    fun `does not join session when roomId is blank`() =
+    fun `host mode sets isHost to true in uiState`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            assertTrue(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `guest mode sets isHost to false in uiState`() =
+        runTest {
+            val viewModel =
+                PlayerViewModel(
+                    SavedStateHandle(mapOf("roomId" to "room-abc")),
+                    FakeMusicRepository(),
+                    FakeSessionRepository(),
+                )
+            assertFalse(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `joins session as host when roomId is blank`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             PlayerViewModel(
@@ -189,7 +211,10 @@ class PlayerViewModelTest {
                 FakeMusicRepository(),
                 sessionRepo,
             )
-            assertNull(sessionRepo.session.value)
+            // Blank roomId → treated as host mode
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            assertEquals(joined!!.localUserId, joined.hostId)
         }
 
     @Test
@@ -205,6 +230,71 @@ class PlayerViewModelTest {
             assertNotNull(joined)
             assertEquals(PlayerViewModel.DEEP_LINK_HOST_ID_PLACEHOLDER, joined!!.hostId)
             assertNotEquals(joined.hostId, joined.localUserId)
+        }
+
+    @Test
+    fun `onBackPressed shows leave confirm dialog`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            assertFalse(viewModel.uiState.value.showLeaveConfirmDialog)
+            viewModel.onBackPressed()
+            assertTrue(viewModel.uiState.value.showLeaveConfirmDialog)
+        }
+
+    @Test
+    fun `onLeaveRoomDismissed hides dialog`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            viewModel.onBackPressed()
+            viewModel.onLeaveRoomDismissed()
+            assertFalse(viewModel.uiState.value.showLeaveConfirmDialog)
+        }
+
+    @Test
+    fun `onLeaveRoomConfirmed calls leaveSession and triggers navigation`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), sessionRepo)
+            viewModel.onBackPressed()
+            viewModel.onLeaveRoomConfirmed()
+            assertFalse("Dialog should be dismissed", viewModel.uiState.value.showLeaveConfirmDialog)
+            assertTrue("navigateBack should be true", viewModel.uiState.value.navigateBack)
+            assertNull("Session should be cleared", sessionRepo.session.value)
+        }
+
+    @Test
+    fun `onEndSessionForAllConfirmed calls endSession and triggers navigation`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), sessionRepo)
+            viewModel.onBackPressed()
+            viewModel.onEndSessionForAllConfirmed()
+            assertFalse("Dialog should be dismissed", viewModel.uiState.value.showLeaveConfirmDialog)
+            assertTrue("navigateBack should be true", viewModel.uiState.value.navigateBack)
+            assertTrue("endSession should have been called", sessionRepo.endSessionCalled)
+        }
+
+    @Test
+    fun `onNavigatedBack resets navigateBack and roomClosedByHost flags`() =
+        runTest {
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), FakeSessionRepository())
+            viewModel.onLeaveRoomConfirmed()
+            assertTrue(viewModel.uiState.value.navigateBack)
+            viewModel.onNavigatedBack()
+            assertFalse(viewModel.uiState.value.navigateBack)
+            assertFalse(viewModel.uiState.value.roomClosedByHost)
+        }
+
+    @Test
+    fun `RoomClosed event sets roomClosedByHost and navigateBack`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = PlayerViewModel(SavedStateHandle(), FakeMusicRepository(), sessionRepo)
+            advanceUntilIdle() // Ensure the ViewModel's event-collection coroutine has started
+            sessionRepo.emitRoomClosed()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.roomClosedByHost)
+            assertTrue(viewModel.uiState.value.navigateBack)
         }
 
     // --- Fake repositories ---
@@ -225,8 +315,11 @@ class PlayerViewModelTest {
 
     private class FakeSessionRepository : SessionRepository {
         private val _session = MutableStateFlow<Session?>(null)
+        private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
         override val session: StateFlow<Session?> = _session
-        override val events: SharedFlow<SyncEvent> = MutableSharedFlow()
+        override val events: SharedFlow<SyncEvent> = _events
+
+        var endSessionCalled = false
 
         override fun onPlayerStateChanged(state: PlayerState) = Unit
 
@@ -236,6 +329,14 @@ class PlayerViewModelTest {
 
         override fun leaveSession() {
             _session.value = null
+        }
+
+        override fun endSession() {
+            endSessionCalled = true
+        }
+
+        fun emitRoomClosed() {
+            _events.tryEmit(SyncEvent.RoomClosed)
         }
     }
 }

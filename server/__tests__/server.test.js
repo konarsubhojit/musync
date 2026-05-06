@@ -508,6 +508,77 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── end_session ───────────────────────────────────────────────────────────
+  describe('end_session', () => {
+    /** Ends a session and waits for the server acknowledgement before resolving. */
+    function endSession(socket, roomId) {
+      return new Promise((resolve, reject) => {
+        socket.emit('end_session', roomId, (ack) => {
+          if (ack && ack.error) reject(new Error(ack.error));
+          else resolve(ack);
+        });
+      });
+    }
+
+    it('broadcasts ROOM_CLOSED to all members including the host', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-end-1');
+      await joinRoom(bob, 'room-end-1');
+
+      const aliceClosed = once(alice, 'ROOM_CLOSED');
+      const bobClosed = once(bob, 'ROOM_CLOSED');
+
+      await endSession(alice, 'room-end-1');
+
+      await Promise.all([aliceClosed, bobClosed]);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('clears room state so late joiners see null', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-end-2');
+      alice.emit('PLAY', { roomId: 'room-end-2', positionMs: 9000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      await endSession(alice, 'room-end-2');
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bob = await connect();
+      const ack = await joinRoom(bob, 'room-end-2');
+      expect(ack.state).toBeNull();
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('rejects end_session with an invalid roomId', async () => {
+      const alice = await connect();
+
+      const ack = await new Promise((resolve) => {
+        alice.emit('end_session', '', resolve);
+      });
+      expect(ack).toMatchObject({ error: expect.any(String) });
+
+      alice.disconnect();
+    });
+
+    it('rejects end_session from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-end-nonmember');
+
+      const ack = await new Promise((resolve) => {
+        intruder.emit('end_session', 'room-end-nonmember', resolve);
+      });
+      expect(ack).toMatchObject({ error: expect.any(String) });
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
   // ── room state cleanup ────────────────────────────────────────────────────
   describe('room state cleanup', () => {
     it('clears state when last member leaves via leave_room', async () => {

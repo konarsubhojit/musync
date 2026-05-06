@@ -249,6 +249,31 @@ function createApp(options = {}) {
       cleanupRoomState(roomId);
     });
 
+    // ── end_session ────────────────────────────────────────────────────────
+    // Allows the host to close the room for all participants.  Broadcasts a
+    // ROOM_CLOSED event to every member (including the host) and deletes the
+    // persisted room state.
+    socket.on('end_session', async (roomId, ack) => {
+      if (typeof roomId !== 'string' || roomId.trim() === '') {
+        if (typeof ack === 'function') ack({ error: 'invalid roomId' });
+        return;
+      }
+      if (!socket.rooms.has(roomId)) {
+        if (typeof ack === 'function') ack({ error: 'not in room' });
+        return;
+      }
+      console.log(`[socket] end_session id=${socket.id}  room=${roomId}`);
+      // Notify all members (including the host) that the room is closed.
+      io.to(roomId).emit('ROOM_CLOSED');
+      // Remove persisted state so late joiners don't see stale data.
+      try {
+        await roomStore.deleteRoom(roomId);
+      } catch (err) {
+        console.error(`[socket] end_session deleteRoom failed  room=${roomId}:`, err);
+      }
+      if (typeof ack === 'function') ack({ ok: true });
+    });
+
     // ── SYNC_HEARTBEAT ─────────────────────────────────────────────────────
     // Relays the host's playback position to every other member of the room.
     // Expected payload: { roomId: string, hostPositionMs: number, hostTimestamp: number }

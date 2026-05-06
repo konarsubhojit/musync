@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -95,12 +96,33 @@ fun PlayerScreen(
         }
     }
 
+    val roomClosedMessage = stringResource(R.string.player_room_closed_by_host)
+    LaunchedEffect(uiState.navigateBack) {
+        if (uiState.navigateBack) {
+            if (uiState.roomClosedByHost) {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(roomClosedMessage)
+            }
+            viewModel.onNavigatedBack()
+            onBack()
+        }
+    }
+
+    if (uiState.showLeaveConfirmDialog) {
+        LeaveRoomConfirmDialog(
+            isHost = uiState.isHost,
+            onLeave = viewModel::onLeaveRoomConfirmed,
+            onEndSessionForAll = viewModel::onEndSessionForAllConfirmed,
+            onDismiss = viewModel::onLeaveRoomDismissed,
+        )
+    }
+
     Scaffold(
         topBar = {
             PlayerTopBar(
                 title = uiState.trackTitle.ifEmpty { stringResource(R.string.app_name) },
                 participantCount = uiState.participantCount,
-                onBack = onBack,
+                onBack = viewModel::onBackPressed,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -267,6 +289,49 @@ private fun PlayerTopBar(
                 navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
                 actionIconContentColor = MaterialTheme.colorScheme.onBackground,
             ),
+    )
+}
+
+// ── Leave Room Confirmation Dialog ───────────────────────────────────────────
+
+@Composable
+private fun LeaveRoomConfirmDialog(
+    isHost: Boolean,
+    onLeave: () -> Unit,
+    onEndSessionForAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.player_leave_dialog_title)) },
+        text = {
+            Text(
+                if (isHost) {
+                    stringResource(R.string.player_leave_dialog_message_host)
+                } else {
+                    stringResource(R.string.player_leave_dialog_message_guest)
+                },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onLeave) {
+                Text(stringResource(R.string.player_leave_dialog_confirm))
+            }
+        },
+        dismissButton = {
+            if (isHost) {
+                TextButton(onClick = onEndSessionForAll) {
+                    Text(
+                        stringResource(R.string.player_leave_dialog_end_for_all),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.player_leave_dialog_cancel))
+                }
+            }
+        },
     )
 }
 

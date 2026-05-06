@@ -3,6 +3,8 @@ package com.musync.data.repository
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
+import com.musync.sync.SocketEvents
+import io.socket.client.Socket
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -16,7 +18,9 @@ import javax.inject.Singleton
 @Singleton
 class SessionRepositoryImpl
     @Inject
-    constructor() : SessionRepository {
+    constructor(
+        private val socket: Socket,
+    ) : SessionRepository {
         companion object {
             /**
              * Buffer capacity for outgoing sync events.
@@ -40,6 +44,13 @@ class SessionRepositoryImpl
          */
         private val playNextEmitted = AtomicBoolean(false)
 
+        init {
+            socket.on(SocketEvents.ROOM_CLOSED) {
+                _session.value = null
+                _events.tryEmit(SyncEvent.RoomClosed)
+            }
+        }
+
         override val session: StateFlow<Session?> = _session.asStateFlow()
 
         override val events: SharedFlow<SyncEvent> = _events.asSharedFlow()
@@ -55,11 +66,22 @@ class SessionRepositoryImpl
         override fun joinSession(session: Session) {
             playNextEmitted.set(false)
             _session.value = session
+            socket.connect()
+            socket.emit(SocketEvents.JOIN_ROOM, session.sessionId)
         }
 
         override fun leaveSession() {
+            val roomId = _session.value?.sessionId
             playNextEmitted.set(false)
             _session.value = null
+            if (roomId != null) {
+                socket.emit(SocketEvents.LEAVE_ROOM, roomId)
+            }
+        }
+
+        override fun endSession() {
+            val roomId = _session.value?.sessionId ?: return
+            socket.emit(SocketEvents.END_SESSION, roomId)
         }
 
         // -----------------------------------------------------------------
