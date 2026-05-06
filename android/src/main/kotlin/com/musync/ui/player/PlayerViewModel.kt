@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.BuildConfig
+import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
@@ -169,8 +170,12 @@ class PlayerViewModel
             // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
-                    if (event is SyncEvent.RoomClosed) {
-                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    when (event) {
+                        is SyncEvent.RoomClosed -> {
+                            _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        }
+                        is SyncEvent.PlayNext -> loadNextTrack()
+                        else -> Unit
                     }
                 }
             }
@@ -431,5 +436,65 @@ class PlayerViewModel
          */
         fun onNavigatedBack() {
             _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
+        }
+
+        /**
+         * Called when the YouTube player signals that the current track has ended.
+         * Notifies [SessionRepository] so it can emit [SyncEvent.PlayNext] when the local
+         * user is the session host.  Auto-advance is then handled in the events collector.
+         */
+        fun onTrackEnded() {
+            sessionRepository.onPlayerStateChanged(PlayerState.ENDED)
+        }
+
+        /**
+         * Removes the track identified by [trackId] from the local queue and broadcasts the
+         * updated queue to the room via [SyncEmitter].  No-op for guest clients.
+         */
+        fun onRemoveFromQueue(trackId: String) {
+            if (!isHost) return
+            val updatedQueue = _uiState.value.queue.filter { it.id != trackId }
+            musicRepository.updateQueue(updatedQueue)
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
+        }
+
+        /**
+         * Moves the queue item at [fromIndex] to [toIndex] and broadcasts the updated queue.
+         * No-op for guest clients or when either index is out of bounds.
+         */
+        fun onMoveQueueItem(
+            fromIndex: Int,
+            toIndex: Int,
+        ) {
+            if (!isHost) return
+            val current = _uiState.value.queue.toMutableList()
+            if (fromIndex < 0 || fromIndex >= current.size || toIndex < 0 || toIndex >= current.size) return
+            val item = current.removeAt(fromIndex)
+            current.add(toIndex, item)
+            musicRepository.updateQueue(current)
+            syncEmitter.emitQueueUpdated(roomId, current)
+        }
+
+        /**
+         * Skips the currently playing track and loads the first track from the queue.
+         * No-op for guest clients or when the queue is empty.
+         */
+        fun onSkipToNext() {
+            if (!isHost) return
+            loadNextTrack()
+        }
+
+        /**
+         * Loads and plays the first track in the queue, removes it from the queue, and
+         * broadcasts the updated queue to the room.  No-op when the queue is empty.
+         */
+        private fun loadNextTrack() {
+            val queue = _uiState.value.queue
+            if (queue.isEmpty()) return
+            val nextTrack = queue[0]
+            val updatedQueue = queue.drop(1)
+            musicRepository.updateQueue(updatedQueue)
+            _uiState.update { it.copy(videoId = nextTrack.youtubeVideoId) }
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
         }
     }
