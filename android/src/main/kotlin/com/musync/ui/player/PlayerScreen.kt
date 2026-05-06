@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -527,7 +528,7 @@ private fun RoomTab(
             Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Invite card
@@ -596,7 +597,7 @@ private fun RoomTab(
         }
 
         // One row per remote listener
-        items(count = participantCount - 1, key = { index -> "listener-$index" }) { index ->
+        items(count = (participantCount - 1).coerceAtLeast(0), key = { index -> "listener-$index" }) { index ->
             ParticipantRow(
                 initial = stringResource(R.string.player_listener_initial),
                 name = stringResource(R.string.player_listener_name, index + 1),
@@ -661,7 +662,7 @@ private fun QueueTab(queue: List<Track>) {
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(items = queue, key = { it.id }) { track ->
