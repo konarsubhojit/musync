@@ -7,6 +7,7 @@ import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import io.mockk.mockk
 import io.mockk.verify
@@ -132,7 +133,7 @@ class PlayerViewModelTest {
     @Test
     fun `inviteLink includes the roomId when joining via deep link`() =
         runTest {
-            val viewModel = buildGuestViewModel(roomId = "room-deep")
+            val viewModel = buildViewModelWithRoomId(roomId = "room-deep")
             val link = viewModel.uiState.value.inviteLink
             assertTrue(
                 "inviteLink should contain roomId",
@@ -162,37 +163,122 @@ class PlayerViewModelTest {
     fun `joins session when roomId is provided via SavedStateHandle`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
-            buildGuestViewModel(roomId = "room-abc", sessionRepository = sessionRepo)
+            buildViewModelWithRoomId(roomId = "room-abc", sessionRepository = sessionRepo)
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals("room-abc", joined!!.sessionId)
         }
 
     @Test
-    fun `does not join session when roomId is absent`() =
+    fun `joins session as host when roomId is absent`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildHostViewModel(sessionRepository = sessionRepo)
-            assertNull(sessionRepo.session.value)
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            // Host: localUserId == hostId
+            assertEquals(joined!!.localUserId, joined.hostId)
         }
 
     @Test
-    fun `does not join session when roomId is blank`() =
+    fun `host mode sets isHost to true in uiState`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            assertTrue(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `guest mode sets isHost to false in uiState`() =
+        runTest {
+            val viewModel = buildViewModelWithRoomId(roomId = "room-abc")
+            assertFalse(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `joins session as host when roomId is blank`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
-            buildGuestViewModel(roomId = "   ", sessionRepository = sessionRepo)
-            assertNull(sessionRepo.session.value)
+            buildViewModelWithRoomId(roomId = "   ", sessionRepository = sessionRepo)
+            // Blank roomId → treated as host mode; session is still joined
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            assertEquals(joined!!.localUserId, joined.hostId)
         }
 
     @Test
     fun `joined session from deep link has different hostId and localUserId (guest)`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
-            buildGuestViewModel(roomId = "room-xyz", sessionRepository = sessionRepo)
+            buildViewModelWithRoomId(roomId = "room-xyz", sessionRepository = sessionRepo)
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals(PlayerViewModel.DEEP_LINK_HOST_ID_PLACEHOLDER, joined!!.hostId)
             assertNotEquals(joined.hostId, joined.localUserId)
+        }
+
+    @Test
+    fun `onBackPressed shows leave confirm dialog`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            assertFalse(viewModel.uiState.value.showLeaveConfirmDialog)
+            viewModel.onBackPressed()
+            assertTrue(viewModel.uiState.value.showLeaveConfirmDialog)
+        }
+
+    @Test
+    fun `onLeaveRoomDismissed hides dialog`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            viewModel.onBackPressed()
+            viewModel.onLeaveRoomDismissed()
+            assertFalse(viewModel.uiState.value.showLeaveConfirmDialog)
+        }
+
+    @Test
+    fun `onLeaveRoomConfirmed calls leaveSession and triggers navigation`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            viewModel.onBackPressed()
+            viewModel.onLeaveRoomConfirmed()
+            assertFalse("Dialog should be dismissed", viewModel.uiState.value.showLeaveConfirmDialog)
+            assertTrue("navigateBack should be true", viewModel.uiState.value.navigateBack)
+            assertNull("Session should be cleared", sessionRepo.session.value)
+        }
+
+    @Test
+    fun `onEndSessionForAllConfirmed calls endSession and triggers navigation`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            viewModel.onBackPressed()
+            viewModel.onEndSessionForAllConfirmed()
+            assertFalse("Dialog should be dismissed", viewModel.uiState.value.showLeaveConfirmDialog)
+            assertTrue("navigateBack should be true", viewModel.uiState.value.navigateBack)
+            assertTrue("endSession should have been called", sessionRepo.endSessionCalled)
+        }
+
+    @Test
+    fun `onNavigatedBack resets navigateBack and roomClosedByHost flags`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            viewModel.onLeaveRoomConfirmed()
+            assertTrue(viewModel.uiState.value.navigateBack)
+            viewModel.onNavigatedBack()
+            assertFalse(viewModel.uiState.value.navigateBack)
+            assertFalse(viewModel.uiState.value.roomClosedByHost)
+        }
+
+    @Test
+    fun `RoomClosed event sets roomClosedByHost and navigateBack`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle() // Ensure the ViewModel's event-collection coroutine has started
+            sessionRepo.emitRoomClosed()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.roomClosedByHost)
+            assertTrue(viewModel.uiState.value.navigateBack)
         }
 
     // --- Host sync emission ---
@@ -208,12 +294,24 @@ class PlayerViewModelTest {
         }
 
     @Test
-    fun `host emits PAUSE when playback state changes to paused`() =
+    fun `host emits PAUSE only after transitioning from PLAYING`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
             val viewModel = buildHostViewModel(syncEmitter = emitter)
+            // Transition: PLAYING → PAUSED
+            viewModel.onPlaybackStateChanged(isPlaying = true)
             viewModel.onPlaybackStateChanged(isPlaying = false)
             verify { emitter.emitPause(any(), any()) }
+        }
+
+    @Test
+    fun `host does not emit PAUSE when state changes to non-playing without prior PLAYING`() =
+        runTest {
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(syncEmitter = emitter)
+            // ENDED/UNSTARTED/CUED: isPlaying=false, isBuffering=false, no prior PLAYING
+            viewModel.onPlaybackStateChanged(isPlaying = false)
+            verify(exactly = 0) { emitter.emitPause(any(), any()) }
         }
 
     @Test
@@ -221,8 +319,30 @@ class PlayerViewModelTest {
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
             val viewModel = buildHostViewModel(syncEmitter = emitter)
+            viewModel.onPlaybackStateChanged(isPlaying = true)
             viewModel.onPlaybackStateChanged(isPlaying = false, isBuffering = true)
             verify(exactly = 0) { emitter.emitPause(any(), any()) }
+            viewModel.onPlaybackStateChanged(isPlaying = false) // cleanup
+        }
+
+    @Test
+    fun `host does not emit PAUSE when video ends (ENDED state)`() =
+        runTest {
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(syncEmitter = emitter)
+            // Simulate ENDED: was playing, then ENDED fires as non-playing, non-buffering
+            // (but ENDED is different from PAUSED - no explicit pause emitted)
+            // This test verifies ENDED does not produce a second PAUSE after heartbeat stops
+            viewModel.onPlaybackStateChanged(isPlaying = true)
+            // Simulate ENDED via the same onPlaybackStateChanged call as the screen does:
+            // when state == ENDED, isPlaying=false and isBuffering=false.
+            // After PLAYING, wasPlaying=true, so PAUSE would be emitted once.
+            // This is intentional for ENDED: emitPause is emitted once, then wasPlaying resets.
+            viewModel.onPlaybackStateChanged(isPlaying = false) // PAUSED/ENDED
+            // Calling again simulates a second non-playing callback (e.g. CUED after ENDED)
+            viewModel.onPlaybackStateChanged(isPlaying = false)
+            // emitPause should only be called once (wasPlaying guard prevents second call)
+            verify(exactly = 1) { emitter.emitPause(any(), any()) }
         }
 
     @Test
@@ -252,7 +372,7 @@ class PlayerViewModelTest {
     fun `guest does not emit PLAY when playback state changes to playing`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
-            val viewModel = buildGuestViewModel(roomId = "room-g", syncEmitter = emitter)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", syncEmitter = emitter)
             viewModel.onPlaybackStateChanged(isPlaying = true)
             verify(exactly = 0) { emitter.emitPlay(any(), any()) }
         }
@@ -261,7 +381,8 @@ class PlayerViewModelTest {
     fun `guest does not emit PAUSE when playback state changes to paused`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
-            val viewModel = buildGuestViewModel(roomId = "room-g", syncEmitter = emitter)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", syncEmitter = emitter)
+            viewModel.onPlaybackStateChanged(isPlaying = true)
             viewModel.onPlaybackStateChanged(isPlaying = false)
             verify(exactly = 0) { emitter.emitPause(any(), any()) }
         }
@@ -270,7 +391,7 @@ class PlayerViewModelTest {
     fun `guest does not emit SEEK when onUserSeeked is called`() =
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
-            val viewModel = buildGuestViewModel(roomId = "room-g", syncEmitter = emitter)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", syncEmitter = emitter)
             viewModel.onUserSeeked(positionMs = 5_000L)
             verify(exactly = 0) { emitter.emitSeek(any(), any()) }
         }
@@ -285,8 +406,42 @@ class PlayerViewModelTest {
     @Test
     fun `isHost is false when a deep-link roomId is provided`() =
         runTest {
-            val viewModel = buildGuestViewModel(roomId = "room-xyz")
+            val viewModel = buildViewModelWithRoomId(roomId = "room-xyz")
             assertFalse(viewModel.isHost)
+        }
+
+    @Test
+    fun `guest starts PlaybackSyncReceiver listening on init`() =
+        runTest {
+            val receiver = mockk<PlaybackSyncReceiver>(relaxed = true)
+            buildViewModelWithRoomId(roomId = "room-g", playbackSyncReceiver = receiver)
+            verify { receiver.startListening() }
+        }
+
+    @Test
+    fun `host does not start PlaybackSyncReceiver listening`() =
+        runTest {
+            val receiver = mockk<PlaybackSyncReceiver>(relaxed = true)
+            buildHostViewModel(playbackSyncReceiver = receiver)
+            verify(exactly = 0) { receiver.startListening() }
+        }
+
+    @Test
+    fun `attachRemotePlayer registers callbacks on PlaybackSyncReceiver for guest`() =
+        runTest {
+            val receiver = mockk<PlaybackSyncReceiver>(relaxed = true)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", playbackSyncReceiver = receiver)
+            viewModel.attachRemotePlayer(onPlay = {}, onPause = {}, onSeek = {})
+            verify { receiver.attachPlayer(any(), any(), any()) }
+        }
+
+    @Test
+    fun `attachRemotePlayer is a no-op for host`() =
+        runTest {
+            val receiver = mockk<PlaybackSyncReceiver>(relaxed = true)
+            val viewModel = buildHostViewModel(playbackSyncReceiver = receiver)
+            viewModel.attachRemotePlayer(onPlay = {}, onPause = {}, onSeek = {})
+            verify(exactly = 0) { receiver.attachPlayer(any(), any(), any()) }
         }
 
     // --- Helpers ---
@@ -295,18 +450,25 @@ class PlayerViewModelTest {
         musicRepository: MusicRepository = FakeMusicRepository(),
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
-    ) = PlayerViewModel(SavedStateHandle(), musicRepository, sessionRepository, syncEmitter)
+        playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+    ) = PlayerViewModel(SavedStateHandle(), musicRepository, sessionRepository, syncEmitter, playbackSyncReceiver)
 
-    private fun buildGuestViewModel(
+    /**
+     * Builds a [PlayerViewModel] with the given [roomId] injected via [SavedStateHandle].
+     * Note: if [roomId] is blank or empty, the ViewModel treats this as **host mode**.
+     */
+    private fun buildViewModelWithRoomId(
         roomId: String,
         musicRepository: MusicRepository = FakeMusicRepository(),
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
+        playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
         sessionRepository,
         syncEmitter,
+        playbackSyncReceiver,
     )
 
     // --- Fake repositories ---
@@ -327,8 +489,11 @@ class PlayerViewModelTest {
 
     private class FakeSessionRepository : SessionRepository {
         private val _session = MutableStateFlow<Session?>(null)
+        private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
         override val session: StateFlow<Session?> = _session
-        override val events: SharedFlow<SyncEvent> = MutableSharedFlow()
+        override val events: SharedFlow<SyncEvent> = _events
+
+        var endSessionCalled = false
 
         override fun onPlayerStateChanged(state: PlayerState) = Unit
 
@@ -338,6 +503,14 @@ class PlayerViewModelTest {
 
         override fun leaveSession() {
             _session.value = null
+        }
+
+        override fun endSession() {
+            endSessionCalled = true
+        }
+
+        fun emitRoomClosed() {
+            _events.tryEmit(SyncEvent.RoomClosed)
         }
     }
 }

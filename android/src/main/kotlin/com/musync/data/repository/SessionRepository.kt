@@ -30,4 +30,13 @@ interface SessionRepository {
 
     /** Leaves the current session. */
     fun leaveSession()
+
+    /**
+     * Ends the session for all participants (host only).
+     *
+     * Emits an `end_session` socket event so the server broadcasts `ROOM_CLOSED`
+     * to every member.  After calling this, the caller should navigate away —
+     * the local session state is cleared when `ROOM_CLOSED` is received.
+     */
+    fun endSession()
 }

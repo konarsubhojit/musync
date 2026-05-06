@@ -33,4 +33,18 @@ data class PlayerUiState(
     val participantCount: Int = 1,
     /** The list of tracks currently queued. */
     val queue: List<Track> = emptyList(),
+    /** Whether the local user is the room host. */
+    val isHost: Boolean = false,
+    /** When `true`, show the "Leave room?" confirmation dialog. */
+    val showLeaveConfirmDialog: Boolean = false,
+    /**
+     * When `true`, the screen should navigate back.  Consumed by the UI via
+     * [PlayerViewModel.onNavigatedBack].
+     */
+    val navigateBack: Boolean = false,
+    /**
+     * When `true`, the room was closed by the host and the guest should see
+     * a "Room was closed by host" message before navigating back.
+     */
+    val roomClosedByHost: Boolean = false,
 )

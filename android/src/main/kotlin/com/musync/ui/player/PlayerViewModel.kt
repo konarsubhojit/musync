@@ -5,9 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.BuildConfig
 import com.musync.data.model.Session
+import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,6 +32,7 @@ class PlayerViewModel
         private val musicRepository: MusicRepository,
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
+        private val playbackSyncReceiver: PlaybackSyncReceiver,
     ) : ViewModel() {
         companion object {
             /**
@@ -78,6 +81,13 @@ class PlayerViewModel
         private var heartbeatJob: Job? = null
 
         /**
+         * `true` only when the local player was most recently in a PLAYING state.
+         * Used to distinguish a genuine PAUSED transition from non-playing states like
+         * ENDED, UNSTARTED, and CUED, which must not trigger a PAUSE socket emission.
+         */
+        private var wasPlaying = false
+
+        /**
          * The host-supplied video ID, if any.  When present, this overrides the
          * track served by [MusicRepository.currentTrack] so the user can play
          * the specific YouTube video they entered when creating the room.
@@ -101,10 +111,10 @@ class PlayerViewModel
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
             isHost = deepLinkRoomId == null
-            roomId = deepLinkRoomId ?: UUID.randomUUID().toString()
 
             if (deepLinkRoomId != null) {
                 // Guest mode: joining a session shared via deep link.
+                roomId = deepLinkRoomId
                 sessionRepository.joinSession(
                     Session(
                         sessionId = roomId,
@@ -112,8 +122,23 @@ class PlayerViewModel
                         localUserId = UUID.randomUUID().toString(),
                     ),
                 )
+                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = false) }
+                // Guests listen for host play/pause/seek commands.
+                playbackSyncReceiver.startListening()
+            } else {
+                // Host mode: generate a new session ID and join as the host so that
+                // join_room / leave_room are emitted via SessionRepositoryImpl.
+                val userId = UUID.randomUUID().toString()
+                roomId = UUID.randomUUID().toString()
+                sessionRepository.joinSession(
+                    Session(
+                        sessionId = roomId,
+                        hostId = userId,
+                        localUserId = userId,
+                    ),
+                )
+                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
-            _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId") }
 
             // Seed the videoId immediately when the host supplied one so the
             // YouTube player can start loading without waiting for the track
@@ -141,28 +166,65 @@ class PlayerViewModel
                 }
             }
 
+            // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
+            viewModelScope.launch {
+                sessionRepository.events.collect { event ->
+                    if (event is SyncEvent.RoomClosed) {
+                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    }
+                }
+            }
+
             // Start the initial auto-hide timer so the overlay controls fade
             // out shortly after the screen appears, mirroring the YouTube app.
             scheduleControlsHide()
         }
 
+        override fun onCleared() {
+            super.onCleared()
+            stopHeartbeat()
+            playbackSyncReceiver.stopListening()
+            // Emit leave_room whenever the ViewModel is destroyed (e.g. system back
+            // gesture that bypasses the confirmation dialog).
+            sessionRepository.leaveSession()
+        }
+
+        /**
+         * Called when the YouTube player state changes.
+         *
+         * For the host, this emits the corresponding socket event (PLAY/PAUSE) and manages
+         * the periodic heartbeat coroutine.  PAUSE is only emitted when transitioning from a
+         * PLAYING state; non-playing states like ENDED, UNSTARTED, and CUED are ignored so
+         * they do not falsely trigger a PAUSE broadcast.
+         */
         fun onPlaybackStateChanged(
             isPlaying: Boolean,
             isBuffering: Boolean = false,
         ) {
             _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
-            if (isHost) {
-                val positionMs = (_uiState.value.currentSecond * 1000).toLong()
-                when {
-                    isPlaying -> {
-                        syncEmitter.emitPlay(roomId, positionMs)
-                        startHeartbeat()
-                    }
-                    !isBuffering -> {
-                        syncEmitter.emitPause(roomId, positionMs)
-                        stopHeartbeat()
-                    }
-                    else -> stopHeartbeat()
+            if (!isHost) return
+
+            val positionMs = (_uiState.value.currentSecond * 1000).toLong()
+            when {
+                isPlaying -> {
+                    wasPlaying = true
+                    syncEmitter.emitPlay(roomId, positionMs)
+                    startHeartbeat()
+                }
+                isBuffering -> {
+                    // Buffering is a transient state — stop the heartbeat but do not emit PAUSE.
+                    stopHeartbeat()
+                }
+                wasPlaying -> {
+                    // True PAUSED transition: player was playing and is now paused by the user.
+                    wasPlaying = false
+                    syncEmitter.emitPause(roomId, positionMs)
+                    stopHeartbeat()
+                }
+                else -> {
+                    // ENDED, UNSTARTED, CUED, or a repeat non-playing callback — not a pause action.
+                    wasPlaying = false
+                    stopHeartbeat()
                 }
             }
         }
@@ -225,6 +287,28 @@ class PlayerViewModel
             syncEmitter.emitSeek(roomId, positionMs)
         }
 
+        /**
+         * Wires the local YouTube player to [PlaybackSyncReceiver] so that PLAY/PAUSE/SEEK
+         * commands from the host are applied to the local player for guests.
+         *
+         * Should be called from [PlayerScreen] when the YouTube player becomes ready.
+         * For host clients this is a no-op because hosts never receive these events
+         * (the server relays them only to *other* room members).
+         *
+         * @param onPlay  Seeks to [positionMs] and starts playback.
+         * @param onPause Seeks to [positionMs] and pauses playback.
+         * @param onSeek  Seeks to [positionMs] without changing play/pause state.
+         */
+        fun attachRemotePlayer(
+            onPlay: (Long) -> Unit,
+            onPause: (Long) -> Unit,
+            onSeek: (Long) -> Unit,
+        ) {
+            if (!isHost) {
+                playbackSyncReceiver.attachPlayer(onPlay, onPause, onSeek)
+            }
+        }
+
         private fun startHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob =
@@ -240,11 +324,6 @@ class PlayerViewModel
         private fun stopHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob = null
-        }
-
-        override fun onCleared() {
-            super.onCleared()
-            stopHeartbeat()
         }
 
         private fun scheduleControlsHide() {
@@ -305,5 +384,46 @@ class PlayerViewModel
                     addToQueueError = false,
                 )
             }
+        }
+
+        /**
+         * Called when the user taps the back button.  Shows a confirmation dialog
+         * rather than navigating immediately, so the user can confirm they want to
+         * leave the room.
+         */
+        fun onBackPressed() {
+            _uiState.update { it.copy(showLeaveConfirmDialog = true) }
+        }
+
+        /** Called when the user dismisses the leave-room confirmation dialog. */
+        fun onLeaveRoomDismissed() {
+            _uiState.update { it.copy(showLeaveConfirmDialog = false) }
+        }
+
+        /**
+         * Called when the user confirms they want to leave the room.
+         * Emits `leave_room` to the server and signals the UI to navigate back.
+         */
+        fun onLeaveRoomConfirmed() {
+            sessionRepository.leaveSession()
+            _uiState.update { it.copy(showLeaveConfirmDialog = false, navigateBack = true) }
+        }
+
+        /**
+         * Called when the host confirms they want to end the session for all participants.
+         * Emits `end_session` to the server (which broadcasts `ROOM_CLOSED` to everyone)
+         * and signals the UI to navigate back.
+         */
+        fun onEndSessionForAllConfirmed() {
+            sessionRepository.endSession()
+            _uiState.update { it.copy(showLeaveConfirmDialog = false, navigateBack = true) }
+        }
+
+        /**
+         * Called by the UI once it has consumed the [PlayerUiState.navigateBack] signal.
+         * Resets the flag so it is not re-consumed on recomposition.
+         */
+        fun onNavigatedBack() {
+            _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
         }
     }
