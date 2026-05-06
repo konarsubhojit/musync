@@ -22,6 +22,7 @@ captures/
 
 # Kotlin
 *.class
+.kotlin/
 
 # OS files
 .DS_Store
