@@ -1,5 +1,6 @@
 package com.musync.ui.player
 
+import com.musync.data.model.ChatMessage
 import com.musync.data.model.Track
 
 /** Which secondary tab is selected below the video. */
@@ -47,4 +48,20 @@ data class PlayerUiState(
      * a "Room was closed by host" message before navigating back.
      */
     val roomClosedByHost: Boolean = false,
+    /** Ordered list of chat messages visible in the Room tab. */
+    val chatMessages: List<ChatMessage> = emptyList(),
+    /** Current text in the chat input field. */
+    val chatInput: String = "",
+    /**
+     * Display names of participants who are currently composing a message.
+     *
+     * Entries auto-expire after the typing inactivity window; the UI shows
+     * a typing indicator while this set is non-empty.
+     */
+    val typingUsers: Set<String> = emptySet(),
+    /**
+     * Queue of ephemeral emoji reactions awaiting display as floating overlays.
+     * Each entry is an emoji string; entries are consumed and removed by the UI.
+     */
+    val pendingReactions: List<String> = emptyList(),
 )

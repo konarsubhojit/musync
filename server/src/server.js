@@ -385,6 +385,46 @@ function createApp(options = {}) {
       }
     });
 
+    // ── CHAT_MESSAGE ───────────────────────────────────────────────────────
+    // Relays a text message from one room member to all other members.
+    // Expected payload: { roomId: string, text: string, senderId: string, senderName: string }
+    socket.on('CHAT_MESSAGE', (payload) => {
+      const { roomId, text, senderId, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof text !== 'string' || text.trim() === '') return;
+      if (typeof senderId !== 'string' || senderId.trim() === '') return;
+      const name = typeof senderName === 'string' && senderName.trim() !== '' ? senderName.trim() : 'Someone';
+      socket.to(roomId).emit('CHAT_MESSAGE', {
+        senderId: senderId.trim(),
+        senderName: name,
+        text: text.trim(),
+      });
+    });
+
+    // ── REACTION ───────────────────────────────────────────────────────────
+    // Relays an ephemeral emoji reaction to all other members of the room.
+    // Expected payload: { roomId: string, emoji: string }
+    socket.on('REACTION', (payload) => {
+      const { roomId, emoji } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof emoji !== 'string' || emoji.trim() === '') return;
+      socket.to(roomId).emit('REACTION', { emoji: emoji.trim() });
+    });
+
+    // ── TYPING ─────────────────────────────────────────────────────────────
+    // Notifies other room members that a participant is composing a message.
+    // Expected payload: { roomId: string, senderId: string, senderName: string }
+    socket.on('TYPING', (payload) => {
+      const { roomId, senderId, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof senderId !== 'string' || senderId.trim() === '') return;
+      const name = typeof senderName === 'string' && senderName.trim() !== '' ? senderName.trim() : 'Someone';
+      socket.to(roomId).emit('TYPING', { senderId: senderId.trim(), senderName: name });
+    });
+
     // ── disconnecting ──────────────────────────────────────────────────────
     // Fires while the socket is still a member of its rooms, so we can
     // clean up state for any room that becomes empty as a result.

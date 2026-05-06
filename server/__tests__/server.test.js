@@ -635,4 +635,237 @@ describe('MuSync server', () => {
       carol.disconnect();
     });
   });
+
+  // ── CHAT_MESSAGE ──────────────────────────────────────────────────────────
+  describe('CHAT_MESSAGE', () => {
+    it('relays a chat message to other room members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-1');
+      await joinRoom(bob, 'room-chat-1');
+
+      const bobReceived = once(bob, 'CHAT_MESSAGE');
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-1',
+        text: 'Hello!',
+        senderId: 'alice-id',
+        senderName: 'Alice',
+      });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({
+        senderId: 'alice-id',
+        senderName: 'Alice',
+        text: 'Hello!',
+      });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo the message back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-noecho');
+      await joinRoom(bob, 'room-chat-noecho');
+
+      let aliceReceived = false;
+      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-noecho',
+        text: 'Hi',
+        senderId: 'alice-id',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a message with blank text', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-blank');
+      await joinRoom(bob, 'room-chat-blank');
+
+      let bobReceived = false;
+      bob.on('CHAT_MESSAGE', () => { bobReceived = true; });
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-blank',
+        text: '   ',
+        senderId: 'alice-id',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(bobReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a message from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-nonmember');
+
+      let aliceReceived = false;
+      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
+      intruder.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-nonmember',
+        text: 'Sneaky',
+        senderId: 'intruder-id',
+        senderName: 'Intruder',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-noname');
+      await joinRoom(bob, 'room-chat-noname');
+
+      const bobReceived = once(bob, 'CHAT_MESSAGE');
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-noname',
+        text: 'Hello',
+        senderId: 'alice-id',
+      });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── REACTION ──────────────────────────────────────────────────────────────
+  describe('REACTION', () => {
+    it('relays an emoji reaction to other room members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-1');
+      await joinRoom(bob, 'room-reaction-1');
+
+      const bobReceived = once(bob, 'REACTION');
+      alice.emit('REACTION', { roomId: 'room-reaction-1', emoji: '🔥' });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ emoji: '🔥' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo the reaction back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-noecho');
+      await joinRoom(bob, 'room-reaction-noecho');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      alice.emit('REACTION', { roomId: 'room-reaction-noecho', emoji: '❤️' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a reaction from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-nonmember');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      intruder.emit('REACTION', { roomId: 'room-reaction-nonmember', emoji: '😂' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── TYPING ────────────────────────────────────────────────────────────────
+  describe('TYPING', () => {
+    it('relays a typing indicator to other room members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-1');
+      await joinRoom(bob, 'room-typing-1');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', {
+        roomId: 'room-typing-1',
+        senderId: 'alice-id',
+        senderName: 'Alice',
+      });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ senderId: 'alice-id', senderName: 'Alice' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo typing back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noecho');
+      await joinRoom(bob, 'room-typing-noecho');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      alice.emit('TYPING', {
+        roomId: 'room-typing-noecho',
+        senderId: 'alice-id',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores typing from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-nonmember');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      intruder.emit('TYPING', {
+        roomId: 'room-typing-nonmember',
+        senderId: 'intruder-id',
+        senderName: 'Intruder',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noname');
+      await joinRoom(bob, 'room-typing-noname');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', { roomId: 'room-typing-noname', senderId: 'alice-id' });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
 });
