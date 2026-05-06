@@ -9,6 +9,7 @@ import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -18,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -33,6 +35,7 @@ class PlayerViewModel
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
         private val playbackSyncReceiver: PlaybackSyncReceiver,
+        private val userPreferencesRepository: UserPreferencesRepository,
     ) : ViewModel() {
         companion object {
             /**
@@ -112,31 +115,19 @@ class PlayerViewModel
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
             isHost = deepLinkRoomId == null
 
+            // Generate a stable local user ID for this session.
+            val localUserId = UUID.randomUUID().toString()
+
             if (deepLinkRoomId != null) {
                 // Guest mode: joining a session shared via deep link.
                 roomId = deepLinkRoomId
-                sessionRepository.joinSession(
-                    Session(
-                        sessionId = roomId,
-                        hostId = DEEP_LINK_HOST_ID_PLACEHOLDER,
-                        localUserId = UUID.randomUUID().toString(),
-                    ),
-                )
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = false) }
                 // Guests listen for host play/pause/seek commands.
                 playbackSyncReceiver.startListening()
             } else {
                 // Host mode: generate a new session ID and join as the host so that
                 // join_room / leave_room are emitted via SessionRepositoryImpl.
-                val userId = UUID.randomUUID().toString()
                 roomId = UUID.randomUUID().toString()
-                sessionRepository.joinSession(
-                    Session(
-                        sessionId = roomId,
-                        hostId = userId,
-                        localUserId = userId,
-                    ),
-                )
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
 
@@ -145,6 +136,29 @@ class PlayerViewModel
             // flow to emit.
             if (initialVideoId != null) {
                 _uiState.update { it.copy(videoId = initialVideoId) }
+            }
+
+            // Read the persisted display name and join the session.  Done in a
+            // coroutine so the DataStore read is non-blocking.
+            viewModelScope.launch {
+                val displayName = userPreferencesRepository.displayName.first()
+                sessionRepository.joinSession(
+                    if (isHost) {
+                        Session(
+                            sessionId = roomId,
+                            hostId = localUserId,
+                            localUserId = localUserId,
+                            displayName = displayName,
+                        )
+                    } else {
+                        Session(
+                            sessionId = roomId,
+                            hostId = DEEP_LINK_HOST_ID_PLACEHOLDER,
+                            localUserId = localUserId,
+                            displayName = displayName,
+                        )
+                    },
+                )
             }
 
             viewModelScope.launch {
@@ -169,8 +183,12 @@ class PlayerViewModel
             // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
-                    if (event is SyncEvent.RoomClosed) {
-                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    when (event) {
+                        is SyncEvent.RoomClosed ->
+                            _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        is SyncEvent.ParticipantsUpdated ->
+                            _uiState.update { it.copy(participants = event.participants) }
+                        else -> Unit
                     }
                 }
             }

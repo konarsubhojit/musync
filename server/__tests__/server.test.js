@@ -92,9 +92,10 @@ describe('MuSync server', () => {
   }
 
   /** Join a room and wait for the server acknowledgement before resolving. */
-  function joinRoom(socket, roomId) {
+  function joinRoom(socket, roomId, displayName) {
     return new Promise((resolve, reject) => {
-      socket.emit('join_room', roomId, (ack) => {
+      const payload = displayName !== undefined ? { roomId, displayName } : roomId;
+      socket.emit('join_room', payload, (ack) => {
         if (ack && ack.error) reject(new Error(ack.error));
         else resolve(ack);
       });
@@ -139,6 +140,83 @@ describe('MuSync server', () => {
       expect(ack).toMatchObject({ error: expect.any(String) });
 
       expect(alice.connected).toBe(true);
+      alice.disconnect();
+    });
+
+    it('accepts join_room with { roomId, displayName } object payload', async () => {
+      const alice = await connect();
+      const ack = await joinRoom(alice, 'room-obj', 'Alice');
+      expect(ack).toMatchObject({ ok: true });
+      alice.disconnect();
+    });
+
+    it('broadcasts displayName in peer_joined when joining with object payload', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-dn');
+
+      const peerJoined = once(alice, 'peer_joined');
+      await joinRoom(bob, 'room-dn', 'Bob');
+
+      const payload = await peerJoined;
+      expect(payload).toMatchObject({ socketId: bob.id, displayName: 'Bob' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── PARTICIPANTS_UPDATED ──────────────────────────────────────────────────
+  describe('PARTICIPANTS_UPDATED', () => {
+    it('broadcasts participant list to all room members when a client joins', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      // Alice joins first; expect a PARTICIPANTS_UPDATED with just Alice.
+      const aliceUpdate1 = once(alice, 'PARTICIPANTS_UPDATED');
+      await joinRoom(alice, 'room-pu', 'Alice');
+      const { participants: afterAlice } = await aliceUpdate1;
+      expect(afterAlice).toHaveLength(1);
+      expect(afterAlice[0]).toMatchObject({ socketId: alice.id, displayName: 'Alice' });
+
+      // Bob joins; both Alice and Bob should receive an updated list.
+      const aliceUpdate2 = once(alice, 'PARTICIPANTS_UPDATED');
+      const bobUpdate1 = once(bob, 'PARTICIPANTS_UPDATED');
+      await joinRoom(bob, 'room-pu', 'Bob');
+
+      const [{ participants: afterBobAlice }, { participants: afterBobBob }] = await Promise.all([
+        aliceUpdate2,
+        bobUpdate1,
+      ]);
+      expect(afterBobAlice).toHaveLength(2);
+      expect(afterBobBob).toHaveLength(2);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('broadcasts updated participant list when a client leaves', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-pu-leave', 'Alice');
+      await joinRoom(bob, 'room-pu-leave', 'Bob');
+
+      const aliceUpdate = once(alice, 'PARTICIPANTS_UPDATED');
+      await leaveRoom(bob, 'room-pu-leave');
+
+      const { participants } = await aliceUpdate;
+      expect(participants).toHaveLength(1);
+      expect(participants[0]).toMatchObject({ socketId: alice.id });
+
+      alice.disconnect();
+    });
+
+    it('sanitises displayName — truncates to 50 chars', async () => {
+      const alice = await connect();
+      const longName = 'A'.repeat(100);
+
+      const update = once(alice, 'PARTICIPANTS_UPDATED');
+      await joinRoom(alice, 'room-pu-sanitise', longName);
+      const { participants } = await update;
+
+      expect(participants[0].displayName).toHaveLength(50);
       alice.disconnect();
     });
   });

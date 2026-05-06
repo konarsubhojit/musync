@@ -140,7 +140,7 @@ fun PlayerScreen(
         topBar = {
             PlayerTopBar(
                 title = uiState.trackTitle.ifEmpty { stringResource(R.string.app_name) },
-                participantCount = uiState.participantCount,
+                participantCount = uiState.participants.size.coerceAtLeast(1),
                 onBack = viewModel::onBackPressed,
             )
         },
@@ -245,7 +245,7 @@ fun PlayerScreen(
                     PlayerTab.Room ->
                         RoomTab(
                             inviteLink = uiState.inviteLink,
-                            participantCount = uiState.participantCount,
+                            participants = uiState.participants,
                             onCopyInvite = {
                                 clipboardManager.setText(AnnotatedString(uiState.inviteLink))
                                 viewModel.onInviteLinkCopied()
@@ -502,7 +502,7 @@ private fun PlayerOverlayControls(
 @Composable
 private fun RoomTab(
     inviteLink: String,
-    participantCount: Int,
+    participants: List<com.musync.data.model.Participant>,
     onCopyInvite: () -> Unit,
     onShareInvite: () -> Unit,
 ) {
@@ -565,42 +565,55 @@ private fun RoomTab(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier =
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Y",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                Spacer(Modifier.size(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.player_participant_you),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = stringResource(R.string.player_participant_count, participantCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+
+        if (participants.isEmpty()) {
+            // Show a placeholder row while the server hasn't responded yet.
+            ParticipantRow(initials = "?", displayName = stringResource(R.string.player_participant_connecting))
+        } else {
+            participants.forEach { participant ->
+                val name = participant.displayName.ifBlank { stringResource(R.string.player_participant_anonymous) }
+                ParticipantRow(
+                    initials = name.take(1).uppercase(),
+                    displayName = name,
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun ParticipantRow(
+    initials: String,
+    displayName: String,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initials,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

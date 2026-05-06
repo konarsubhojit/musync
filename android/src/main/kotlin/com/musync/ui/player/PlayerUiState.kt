@@ -1,5 +1,6 @@
 package com.musync.ui.player
 
+import com.musync.data.model.Participant
 import com.musync.data.model.Track
 
 /** Which secondary tab is selected below the video. */
@@ -25,12 +26,11 @@ data class PlayerUiState(
     /** True when the URL in the add-to-queue input does not parse to a valid YouTube ID. */
     val addToQueueError: Boolean = false,
     /**
-     * Static placeholder for the participant count badge — the underlying
-     * presence data is not wired through yet, so we always count just the
-     * local listener.  Reserved as state so it can later be driven by the
-     * signalling server.
+     * Live participant list for this session, populated from `PARTICIPANTS_UPDATED`
+     * server events.  Starts with just the local user until the first server
+     * broadcast arrives.
      */
-    val participantCount: Int = 1,
+    val participants: List<Participant> = emptyList(),
     /** The list of tracks currently queued. */
     val queue: List<Track> = emptyList(),
     /** Whether the local user is the room host. */

@@ -10,4 +10,5 @@ object SocketEvents {
     const val PLAY = "PLAY"
     const val PAUSE = "PAUSE"
     const val SEEK = "SEEK"
+    const val PARTICIPANTS_UPDATED = "PARTICIPANTS_UPDATED"
 }

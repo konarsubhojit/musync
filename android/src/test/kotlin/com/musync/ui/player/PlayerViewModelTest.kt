@@ -7,6 +7,7 @@ import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import io.mockk.mockk
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -164,6 +166,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "room-abc", sessionRepository = sessionRepo)
+            advanceUntilIdle() // wait for the async joinSession coroutine to complete
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals("room-abc", joined!!.sessionId)
@@ -174,6 +177,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle() // wait for the async joinSession coroutine to complete
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             // Host: localUserId == hostId
@@ -199,6 +203,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "   ", sessionRepository = sessionRepo)
+            advanceUntilIdle() // wait for the async joinSession coroutine to complete
             // Blank roomId → treated as host mode; session is still joined
             val joined = sessionRepo.session.value
             assertNotNull(joined)
@@ -210,6 +215,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "room-xyz", sessionRepository = sessionRepo)
+            advanceUntilIdle() // wait for the async joinSession coroutine to complete
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals(PlayerViewModel.DEEP_LINK_HOST_ID_PLACEHOLDER, joined!!.hostId)
@@ -279,6 +285,22 @@ class PlayerViewModelTest {
             advanceUntilIdle()
             assertTrue(viewModel.uiState.value.roomClosedByHost)
             assertTrue(viewModel.uiState.value.navigateBack)
+        }
+
+    @Test
+    fun `ParticipantsUpdated event updates participants list in uiState`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            val participants =
+                listOf(
+                    com.musync.data.model.Participant(socketId = "s1", displayName = "Alice"),
+                    com.musync.data.model.Participant(socketId = "s2", displayName = "Bob"),
+                )
+            sessionRepo.emitParticipantsUpdated(participants)
+            advanceUntilIdle()
+            assertEquals(participants, viewModel.uiState.value.participants)
         }
 
     // --- Host sync emission ---
@@ -445,7 +467,15 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
-    ) = PlayerViewModel(SavedStateHandle(), musicRepository, sessionRepository, syncEmitter, playbackSyncReceiver)
+        userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
+    ) = PlayerViewModel(
+        SavedStateHandle(),
+        musicRepository,
+        sessionRepository,
+        syncEmitter,
+        playbackSyncReceiver,
+        userPreferencesRepository,
+    )
 
     /**
      * Builds a [PlayerViewModel] with the given [roomId] injected via [SavedStateHandle].
@@ -457,12 +487,14 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+        userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
         sessionRepository,
         syncEmitter,
         playbackSyncReceiver,
+        userPreferencesRepository,
     )
 
     // --- Fake repositories ---
@@ -506,5 +538,15 @@ class PlayerViewModelTest {
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
         }
+
+        fun emitParticipantsUpdated(participants: List<com.musync.data.model.Participant>) {
+            _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
+        }
+    }
+
+    private class FakeUserPreferencesRepository : UserPreferencesRepository {
+        override val displayName = flowOf("")
+
+        override suspend fun saveDisplayName(name: String) = Unit
     }
 }

@@ -198,6 +198,18 @@ function createApp(options = {}) {
    * @param {string}      roomId
    * @param {string|null} leavingSocketId
    */
+  /**
+   * Sanitises a display name supplied by a client.
+   * Trims whitespace and truncates to 50 characters.  Returns an empty string
+   * if the value is not a non-empty string so callers always get a safe value.
+   * @param {unknown} name
+   * @returns {string}
+   */
+  function sanitiseDisplayName(name) {
+    if (typeof name !== 'string') return '';
+    return name.trim().slice(0, 50);
+  }
+
   async function cleanupRoomState(roomId, leavingSocketId = null) {
     try {
       const sockets = await io.in(roomId).fetchSockets();
@@ -212,19 +224,54 @@ function createApp(options = {}) {
     }
   }
 
+  // ── Participant name tracking ─────────────────────────────────────────────
+  // Ephemeral in-memory map from socketId → { roomId, displayName }.
+  // Used to build the PARTICIPANTS_UPDATED payload broadcast on join/leave.
+  /** @type {Map<string, { roomId: string, displayName: string }>} */
+  const participantNames = new Map();
+
+  /**
+   * Builds the current participant list for a room and broadcasts
+   * `PARTICIPANTS_UPDATED` to every member (including the triggering socket).
+   * @param {string} roomId
+   */
+  async function broadcastParticipants(roomId) {
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      const participants = sockets.map((s) => ({
+        socketId: s.id,
+        displayName: participantNames.get(s.id)?.displayName ?? '',
+      }));
+      io.to(roomId).emit('PARTICIPANTS_UPDATED', { participants });
+    } catch (err) {
+      console.error(`[socket] broadcastParticipants failed  room=${roomId}:`, err);
+    }
+  }
+
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[socket] connected  id=${socket.id}`);
 
     // ── join_room ──────────────────────────────────────────────────────────
-    socket.on('join_room', async (roomId, ack) => {
+    // Accepts either a bare roomId string (legacy) or an object
+    // { roomId: string, displayName?: string } (current protocol).
+    socket.on('join_room', async (arg, ack) => {
+      const roomId = typeof arg === 'string' ? arg : arg?.roomId;
+      const displayName =
+        typeof arg === 'object' && arg !== null
+          ? sanitiseDisplayName(arg.displayName)
+          : '';
+
       if (typeof roomId !== 'string' || roomId.trim() === '') {
         if (typeof ack === 'function') ack({ error: 'invalid roomId' });
         return;
       }
       socket.join(roomId);
-      console.log(`[socket] joined     id=${socket.id}  room=${roomId}`);
-      socket.to(roomId).emit('peer_joined', { socketId: socket.id });
+      participantNames.set(socket.id, { roomId, displayName });
+      console.log(`[socket] joined     id=${socket.id}  room=${roomId}  name=${displayName}`);
+      socket.to(roomId).emit('peer_joined', { socketId: socket.id, displayName });
+      // Broadcast the updated participant list to everyone in the room.
+      broadcastParticipants(roomId);
       if (typeof ack === 'function') {
         try {
           const roomData = await roomStore.getRoom(roomId);
@@ -242,9 +289,12 @@ function createApp(options = {}) {
         if (typeof ack === 'function') ack({ error: 'invalid roomId' });
         return;
       }
+      participantNames.delete(socket.id);
       socket.leave(roomId);
       console.log(`[socket] left       id=${socket.id}  room=${roomId}`);
       socket.to(roomId).emit('peer_left', { socketId: socket.id });
+      // Broadcast the updated participant list to remaining room members.
+      broadcastParticipants(roomId);
       if (typeof ack === 'function') ack({ ok: true });
       cleanupRoomState(roomId);
     });
@@ -394,6 +444,10 @@ function createApp(options = {}) {
         if (roomId === socket.id) continue;
         // Pass socket.id so it is excluded when checking remaining members.
         cleanupRoomState(roomId, socket.id);
+        // Remove participant from the tracking map and broadcast the updated
+        // list to the remaining members before the socket fully leaves.
+        participantNames.delete(socket.id);
+        broadcastParticipants(roomId);
       }
     });
 

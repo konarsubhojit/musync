@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -25,6 +27,9 @@ class SessionRepositoryImplTest {
 
     /** Stores the ROOM_CLOSED listener registered by the repository so tests can invoke it. */
     private var roomClosedListener: Emitter.Listener? = null
+
+    /** Stores the PARTICIPANTS_UPDATED listener so tests can simulate the server event. */
+    private var participantsUpdatedListener: Emitter.Listener? = null
 
     private val hostSession =
         Session(
@@ -44,9 +49,15 @@ class SessionRepositoryImplTest {
     fun setUp() {
         socket = mockk(relaxed = true)
         // Capture the ROOM_CLOSED listener so tests can simulate the server event.
-        val listenerSlot = slot<Emitter.Listener>()
-        every { socket.on("ROOM_CLOSED", capture(listenerSlot)) } answers {
-            roomClosedListener = listenerSlot.captured
+        val roomClosedSlot = slot<Emitter.Listener>()
+        every { socket.on("ROOM_CLOSED", capture(roomClosedSlot)) } answers {
+            roomClosedListener = roomClosedSlot.captured
+            socket
+        }
+        // Capture the PARTICIPANTS_UPDATED listener so tests can simulate the server event.
+        val participantsSlot = slot<Emitter.Listener>()
+        every { socket.on("PARTICIPANTS_UPDATED", capture(participantsSlot)) } answers {
+            participantsUpdatedListener = participantsSlot.captured
             socket
         }
         repository = SessionRepositoryImpl(socket)
@@ -219,5 +230,73 @@ class SessionRepositoryImplTest {
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.RoomClosed, emitted.first())
             assertTrue("Session should be cleared after ROOM_CLOSED", repository.session.value == null)
+        }
+
+    // ------------------------------------------------------------------
+    // PARTICIPANTS_UPDATED server event emits SyncEvent.ParticipantsUpdated
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits ParticipantsUpdated when PARTICIPANTS_UPDATED server event is received`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val payload =
+                JSONObject().apply {
+                    put(
+                        "participants",
+                        JSONArray().apply {
+                            put(
+                                JSONObject().apply {
+                                    put("socketId", "s1")
+                                    put("displayName", "Alice")
+                                },
+                            )
+                            put(
+                                JSONObject().apply {
+                                    put("socketId", "s2")
+                                    put("displayName", "Bob")
+                                },
+                            )
+                        },
+                    )
+                }
+
+            val emitted =
+                collectEvents {
+                    participantsUpdatedListener?.call(payload)
+                }
+
+            assertEquals(1, emitted.size)
+            val event = emitted.first() as SyncEvent.ParticipantsUpdated
+            assertEquals(2, event.participants.size)
+            assertEquals("Alice", event.participants[0].displayName)
+            assertEquals("s1", event.participants[0].socketId)
+            assertEquals("Bob", event.participants[1].displayName)
+        }
+
+    @Test
+    fun `PARTICIPANTS_UPDATED with missing socketId is ignored`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val payload =
+                JSONObject().apply {
+                    put(
+                        "participants",
+                        JSONArray().apply {
+                            // No socketId field — should be filtered out
+                            put(JSONObject().apply { put("displayName", "Alice") })
+                        },
+                    )
+                }
+
+            val emitted =
+                collectEvents {
+                    participantsUpdatedListener?.call(payload)
+                }
+
+            val event = emitted.firstOrNull() as? SyncEvent.ParticipantsUpdated
+            assertTrue("Event should be emitted but with empty list", event != null && event.participants.isEmpty())
         }
 }

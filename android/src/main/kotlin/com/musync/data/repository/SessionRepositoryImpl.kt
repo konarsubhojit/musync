@@ -1,5 +1,6 @@
 package com.musync.data.repository
 
+import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,6 +51,19 @@ class SessionRepositoryImpl
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
             }
+
+            socket.on(SocketEvents.PARTICIPANTS_UPDATED) { args ->
+                val payload = args?.getOrNull(0) as? JSONObject ?: return@on
+                val participantsArray = payload.optJSONArray("participants") ?: return@on
+                val participants =
+                    (0 until participantsArray.length()).mapNotNull { i ->
+                        val obj = participantsArray.optJSONObject(i) ?: return@mapNotNull null
+                        val socketId = obj.optString("socketId").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                        val displayName = obj.optString("displayName")
+                        Participant(socketId = socketId, displayName = displayName)
+                    }
+                _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
+            }
         }
 
         override val session: StateFlow<Session?> = _session.asStateFlow()
@@ -67,7 +82,12 @@ class SessionRepositoryImpl
             playNextEmitted.set(false)
             _session.value = session
             socket.connect()
-            socket.emit(SocketEvents.JOIN_ROOM, session.sessionId)
+            val payload =
+                JSONObject().apply {
+                    put("roomId", session.sessionId)
+                    put("displayName", session.displayName)
+                }
+            socket.emit(SocketEvents.JOIN_ROOM, payload)
         }
 
         override fun leaveSession() {

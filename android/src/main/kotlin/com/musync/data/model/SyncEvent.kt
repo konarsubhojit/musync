@@ -11,4 +11,7 @@ sealed class SyncEvent {
 
     /** Emitted when the host ends the session for all participants. */
     data object RoomClosed : SyncEvent()
+
+    /** Emitted when the server broadcasts an updated participant list for the room. */
+    data class ParticipantsUpdated(val participants: List<Participant>) : SyncEvent()
 }
