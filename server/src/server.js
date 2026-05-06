@@ -145,6 +145,20 @@ function createApp(options = {}) {
   }
 
   /**
+   * Returns `true` when `socketId` is authorised to send playback commands in
+   * `roomId`.  A socket is authorised when either:
+   *  - no room state exists yet (it will become the host on first write), or
+   *  - it is already the stored host for the room.
+   *
+   * @param {string}         socketId
+   * @param {RoomData|null}  existing  - Current room state (may be null).
+   * @returns {boolean}
+   */
+  function isAuthorisedHost(socketId, existing) {
+    return !existing?.hostId || existing.hostId === socketId;
+  }
+
+  /**
    * Persists the given playback state delta for a room and returns the updated
    * RoomData.  Only called when the socket has already verified membership.
    *
@@ -345,7 +359,7 @@ function createApp(options = {}) {
       if (pos === null) return;
       try {
         const existing = await roomStore.getRoom(roomId);
-        if (existing?.hostId && existing.hostId !== socket.id) return;
+        if (!isAuthorisedHost(socket.id, existing)) return;
         const roomData = await updateRoomState(socket.id, roomId, true, pos);
         socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
       } catch (err) {
@@ -365,7 +379,7 @@ function createApp(options = {}) {
       if (pos === null) return;
       try {
         const existing = await roomStore.getRoom(roomId);
-        if (existing?.hostId && existing.hostId !== socket.id) return;
+        if (!isAuthorisedHost(socket.id, existing)) return;
         const roomData = await updateRoomState(socket.id, roomId, false, pos);
         socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
       } catch (err) {
@@ -387,7 +401,7 @@ function createApp(options = {}) {
         // Preserve the current isPlaying flag; default to false (paused) when
         // no prior PLAY/PAUSE event has established room state yet.
         const existing = await roomStore.getRoom(roomId);
-        if (existing?.hostId && existing.hostId !== socket.id) return;
+        if (!isAuthorisedHost(socket.id, existing)) return;
         const isPlaying = existing?.isPlaying ?? false;
         const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
         socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
