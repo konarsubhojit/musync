@@ -435,6 +435,11 @@ class PlayerViewModel
         /**
          * Adds the given YouTube search result directly to the queue and closes the
          * "Add to queue" bottom sheet.
+         *
+         * [Track.durationMs] is set to 0 because the YouTube search API does not
+         * return video duration; the player resolves the real duration on playback
+         * via [PlayerViewModel.onDurationReceived].  This mirrors the behaviour of
+         * the URL-paste flow ([onAddToQueueConfirm]).
          */
         fun onSearchResultSelected(result: YouTubeSearchResult) {
             musicRepository.addToQueue(

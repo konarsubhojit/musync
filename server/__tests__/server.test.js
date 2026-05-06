@@ -82,6 +82,7 @@ describe('MuSync server', () => {
   // ── YouTube search proxy ──────────────────────────────────────────────────
   describe('GET /api/youtube/search', () => {
     const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalFetch = global.fetch;
 
     afterEach(() => {
       if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
@@ -89,8 +90,6 @@ describe('MuSync server', () => {
       // Restore the global fetch if it was replaced
       global.fetch = originalFetch;
     });
-
-    const originalFetch = global.fetch;
 
     it('returns 503 when YOUTUBE_API_KEY is not configured', async () => {
       delete process.env.YOUTUBE_API_KEY;
