@@ -173,6 +173,7 @@ fun PlayerScreen(
                     },
                     onSeek = { second ->
                         viewModel.onControlsInteraction()
+                        viewModel.onUserSeeked((second * 1000).toLong())
                         youTubePlayer?.seekTo(second)
                     },
                 )

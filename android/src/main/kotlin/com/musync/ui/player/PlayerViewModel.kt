@@ -8,6 +8,7 @@ import com.musync.data.model.Session
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ class PlayerViewModel
         savedStateHandle: SavedStateHandle,
         private val musicRepository: MusicRepository,
         private val sessionRepository: SessionRepository,
+        private val syncEmitter: SyncEmitter,
     ) : ViewModel() {
         companion object {
             /**
@@ -52,6 +54,9 @@ class PlayerViewModel
             /** Duration (ms) before the playback overlay controls auto-hide after a tap. */
             internal const val CONTROLS_AUTO_HIDE_MS = 3_000L
 
+            /** Interval (ms) between periodic [SyncEmitter.emitHeartbeat] calls while playing. */
+            internal const val HEARTBEAT_INTERVAL_MS = 3_000L
+
             /** SavedStateHandle key for the initial videoId provided when a host creates a room. */
             internal const val ARG_VIDEO_ID = "videoId"
 
@@ -68,6 +73,9 @@ class PlayerViewModel
         /** Tracks the active "auto-hide controls" job so each interaction restarts the timer. */
         private var controlsAutoHideJob: Job? = null
 
+        /** Tracks the active periodic heartbeat emission job. */
+        private var heartbeatJob: Job? = null
+
         /**
          * The host-supplied video ID, if any.  When present, this overrides the
          * track served by [MusicRepository.currentTrack] so the user can play
@@ -76,10 +84,25 @@ class PlayerViewModel
         private val initialVideoId: String? =
             savedStateHandle.get<String>(ARG_VIDEO_ID)?.takeIf { it.isNotBlank() }
 
-        init {
-            val roomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
+        /**
+         * The room ID for this session.
+         * - In guest mode (joined via deep link) this is taken from the deep-link URI.
+         * - In host mode this is a freshly generated UUID shared via the invite link.
+         */
+        private val roomId: String
 
-            if (roomId != null) {
+        /**
+         * `true` when this client is the session host (i.e. no deep-link room ID was provided).
+         * Only the host emits PLAY / PAUSE / SEEK / SYNC_HEARTBEAT events to the server.
+         */
+        internal val isHost: Boolean
+
+        init {
+            val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
+            isHost = deepLinkRoomId == null
+            roomId = deepLinkRoomId ?: UUID.randomUUID().toString()
+
+            if (deepLinkRoomId != null) {
                 // Guest mode: joining a session shared via deep link.
                 sessionRepository.joinSession(
                     Session(
@@ -88,12 +111,8 @@ class PlayerViewModel
                         localUserId = UUID.randomUUID().toString(),
                     ),
                 )
-                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId") }
-            } else {
-                // Host mode: generate a new session ID so the invite link can be shared.
-                val sessionId = UUID.randomUUID().toString()
-                _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$sessionId") }
             }
+            _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId") }
 
             // Seed the videoId immediately when the host supplied one so the
             // YouTube player can start loading without waiting for the track
@@ -131,6 +150,20 @@ class PlayerViewModel
             isBuffering: Boolean = false,
         ) {
             _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
+            if (isHost) {
+                val positionMs = (_uiState.value.currentSecond * 1000).toLong()
+                when {
+                    isPlaying -> {
+                        syncEmitter.emitPlay(roomId, positionMs)
+                        startHeartbeat()
+                    }
+                    !isBuffering -> {
+                        syncEmitter.emitPause(roomId, positionMs)
+                        stopHeartbeat()
+                    }
+                    else -> stopHeartbeat()
+                }
+            }
         }
 
         fun onCurrentSecond(second: Float) {
@@ -179,6 +212,33 @@ class PlayerViewModel
                 _uiState.update { it.copy(controlsVisible = true) }
             }
             scheduleControlsHide()
+        }
+
+        /**
+         * Called when the host user manually seeks to a new position.
+         * Emits a [com.musync.sync.SocketEvents.SEEK] event to the server so that guests
+         * can seek to the same position.  No-op for guest clients.
+         */
+        fun onUserSeeked(positionMs: Long) {
+            if (!isHost) return
+            syncEmitter.emitSeek(roomId, positionMs)
+        }
+
+        private fun startHeartbeat() {
+            heartbeatJob?.cancel()
+            heartbeatJob =
+                viewModelScope.launch {
+                    while (true) {
+                        delay(HEARTBEAT_INTERVAL_MS)
+                        val positionMs = (_uiState.value.currentSecond * 1000).toLong()
+                        syncEmitter.emitHeartbeat(roomId, positionMs)
+                    }
+                }
+        }
+
+        private fun stopHeartbeat() {
+            heartbeatJob?.cancel()
+            heartbeatJob = null
         }
 
         private fun scheduleControlsHide() {
