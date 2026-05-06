@@ -438,6 +438,59 @@ class PlayerViewModelTest {
             verify(exactly = 0) { receiver.attachPlayer(any(), any(), any()) }
         }
 
+    // --- Host transfer ---
+
+    @Test
+    fun `HostTransferred(isNowHost=true) promotes guest to host`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildViewModelWithRoomId(roomId = "room-transfer", sessionRepository = sessionRepo)
+            assertFalse("Initially a guest", viewModel.isHost)
+            assertFalse(viewModel.uiState.value.isHost)
+
+            advanceUntilIdle() // ensure event-collection coroutine has started
+            sessionRepo.emitHostTransferred(isNowHost = true)
+            advanceUntilIdle()
+
+            assertTrue("Should now be host", viewModel.isHost)
+            assertTrue(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `HostTransferred(isNowHost=false) demotes host to guest`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            assertTrue("Initially the host", viewModel.isHost)
+            assertTrue(viewModel.uiState.value.isHost)
+
+            advanceUntilIdle() // ensure event-collection coroutine has started
+            sessionRepo.emitHostTransferred(isNowHost = false)
+            advanceUntilIdle()
+
+            assertFalse("Should no longer be host", viewModel.isHost)
+            assertFalse(viewModel.uiState.value.isHost)
+        }
+
+    @Test
+    fun `onTransferHost calls transferHost on session repository`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            viewModel.onTransferHost("other-socket-id")
+            assertNotNull("transferHost should have been called", sessionRepo.transferHostCalledWith)
+            assertEquals("other-socket-id", sessionRepo.transferHostCalledWith?.second)
+        }
+
+    @Test
+    fun `onTransferHost is a no-op when local user is a guest`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", sessionRepository = sessionRepo)
+            viewModel.onTransferHost("other-socket-id")
+            assertNull("transferHost must not be called for a guest", sessionRepo.transferHostCalledWith)
+        }
+
     // --- Helpers ---
 
     private fun buildHostViewModel(
@@ -488,6 +541,7 @@ class PlayerViewModelTest {
         override val events: SharedFlow<SyncEvent> = _events
 
         var endSessionCalled = false
+        var transferHostCalledWith: Pair<String, String>? = null
 
         override fun onPlayerStateChanged(state: PlayerState) = Unit
 
@@ -503,8 +557,16 @@ class PlayerViewModelTest {
             endSessionCalled = true
         }
 
+        override fun transferHost(roomId: String, newHostSocketId: String) {
+            transferHostCalledWith = Pair(roomId, newHostSocketId)
+        }
+
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
+        }
+
+        fun emitHostTransferred(isNowHost: Boolean) {
+            _events.tryEmit(SyncEvent.HostTransferred(isNowHost))
         }
     }
 }

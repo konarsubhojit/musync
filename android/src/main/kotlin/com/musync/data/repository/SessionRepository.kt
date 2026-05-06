@@ -39,4 +39,17 @@ interface SessionRepository {
      * the local session state is cleared when `ROOM_CLOSED` is received.
      */
     fun endSession()
+
+    /**
+     * Transfers the host role to the participant identified by [newHostSocketId].
+     *
+     * Emits a `TRANSFER_HOST` socket event.  The server validates that the local
+     * user is the current host, then broadcasts `HOST_TRANSFERRED` to all room
+     * members.  Only the current host may call this; calling it as a guest is
+     * a no-op (the server will silently reject the event).
+     *
+     * @param roomId         The session / room identifier.
+     * @param newHostSocketId The socket ID of the participant to promote to host.
+     */
+    fun transferHost(roomId: String, newHostSocketId: String)
 }

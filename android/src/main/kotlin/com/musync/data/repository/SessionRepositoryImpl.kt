@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,6 +50,14 @@ class SessionRepositoryImpl
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
             }
+
+            socket.on(SocketEvents.HOST_TRANSFERRED) { args ->
+                val payload = args.firstOrNull() as? JSONObject ?: return@on
+                val newHostSocketId = payload.optString("newHostSocketId")
+                if (newHostSocketId.isBlank()) return@on
+                val isNowHost = newHostSocketId == socket.id()
+                _events.tryEmit(SyncEvent.HostTransferred(isNowHost))
+            }
         }
 
         override val session: StateFlow<Session?> = _session.asStateFlow()
@@ -82,6 +91,15 @@ class SessionRepositoryImpl
         override fun endSession() {
             val roomId = _session.value?.sessionId ?: return
             socket.emit(SocketEvents.END_SESSION, roomId)
+        }
+
+        override fun transferHost(roomId: String, newHostSocketId: String) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("newHostSocketId", newHostSocketId)
+                }
+            socket.emit(SocketEvents.TRANSFER_HOST, payload)
         }
 
         // -----------------------------------------------------------------

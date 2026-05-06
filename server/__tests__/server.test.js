@@ -635,4 +635,282 @@ describe('MuSync server', () => {
       carol.disconnect();
     });
   });
+
+  // ── host permissions ─────────────────────────────────────────────────────
+  describe('host permissions', () => {
+    it('does not relay PLAY from a guest when a host is already established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-play');
+      await joinRoom(bob, 'room-host-play');
+      await joinRoom(carol, 'room-host-play');
+
+      // Alice sends PLAY first — she becomes the host
+      alice.emit('PLAY', { roomId: 'room-host-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Bob (a non-host) tries to send PLAY — must be silently dropped
+      let received = false;
+      carol.on('PLAY', () => { received = true; });
+      bob.emit('PLAY', { roomId: 'room-host-play', positionMs: 2000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('does not relay PAUSE from a guest when a host is established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-pause');
+      await joinRoom(bob, 'room-host-pause');
+      await joinRoom(carol, 'room-host-pause');
+
+      alice.emit('PLAY', { roomId: 'room-host-pause', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      carol.on('PAUSE', () => { received = true; });
+      bob.emit('PAUSE', { roomId: 'room-host-pause', positionMs: 1000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('does not relay SEEK from a guest when a host is established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-seek');
+      await joinRoom(bob, 'room-host-seek');
+      await joinRoom(carol, 'room-host-seek');
+
+      alice.emit('PLAY', { roomId: 'room-host-seek', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      carol.on('SEEK', () => { received = true; });
+      bob.emit('SEEK', { roomId: 'room-host-seek', positionMs: 5000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('guest PLAY does not update room state', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-play-state');
+      await joinRoom(bob, 'room-host-play-state');
+
+      // Alice (host) plays at 1000ms
+      alice.emit('PLAY', { roomId: 'room-host-play-state', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Bob (guest) attempts to play at a different position — must be ignored
+      bob.emit('PLAY', { roomId: 'room-host-play-state', positionMs: 9999 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-host-play-state');
+      // State must reflect Alice's original play, not Bob's attempt
+      expect(ack.state).toMatchObject({ positionMs: 1000, hostId: alice.id });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('allows host to PLAY, PAUSE, and SEEK in sequence', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-sequence');
+      await joinRoom(bob, 'room-host-sequence');
+
+      const playP = once(bob, 'PLAY');
+      alice.emit('PLAY', { roomId: 'room-host-sequence', positionMs: 0 });
+      await playP;
+
+      const pauseP = once(bob, 'PAUSE');
+      alice.emit('PAUSE', { roomId: 'room-host-sequence', positionMs: 5000 });
+      await pauseP;
+
+      const seekP = once(bob, 'SEEK');
+      alice.emit('SEEK', { roomId: 'room-host-sequence', positionMs: 30000 });
+      await seekP;
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── TRANSFER_HOST ─────────────────────────────────────────────────────────
+  describe('TRANSFER_HOST', () => {
+    it('updates hostId and broadcasts HOST_TRANSFERRED to all members', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-1');
+      await joinRoom(bob, 'room-transfer-1');
+      await joinRoom(carol, 'room-transfer-1');
+
+      // Alice becomes host
+      alice.emit('PLAY', { roomId: 'room-transfer-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const aliceTransferred = once(alice, 'HOST_TRANSFERRED');
+      const bobTransferred = once(bob, 'HOST_TRANSFERRED');
+      const carolTransferred = once(carol, 'HOST_TRANSFERRED');
+
+      alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-1', newHostSocketId: bob.id });
+
+      const [alicePayload, bobPayload, carolPayload] = await Promise.all([
+        aliceTransferred,
+        bobTransferred,
+        carolTransferred,
+      ]);
+
+      expect(alicePayload).toMatchObject({ newHostSocketId: bob.id });
+      expect(bobPayload).toMatchObject({ newHostSocketId: bob.id });
+      expect(carolPayload).toMatchObject({ newHostSocketId: bob.id });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('updates room state hostId after transfer', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-state');
+      await joinRoom(bob, 'room-transfer-state');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-state', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      await new Promise((resolve) => {
+        alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-state', newHostSocketId: bob.id });
+        bob.once('HOST_TRANSFERRED', resolve);
+      });
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-transfer-state');
+      expect(ack.state.hostId).toBe(bob.id);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('new host can PLAY after transfer; old host cannot', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-play');
+      await joinRoom(bob, 'room-transfer-play');
+      await joinRoom(carol, 'room-transfer-play');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Transfer host from alice to bob
+      await new Promise((resolve) => {
+        alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-play', newHostSocketId: bob.id });
+        bob.once('HOST_TRANSFERRED', resolve);
+      });
+
+      // Alice (former host) tries to PLAY — should be rejected
+      let alicePlayReceived = false;
+      carol.on('PLAY', () => { alicePlayReceived = true; });
+      alice.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 9000 });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(alicePlayReceived).toBe(false);
+
+      // Bob (new host) can PLAY
+      const bobPlayReceived = once(carol, 'PLAY');
+      bob.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 500 });
+      const payload = await bobPlayReceived;
+      expect(payload).toMatchObject({ positionMs: 500 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('ignores TRANSFER_HOST from a non-host socket', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-nonhost');
+      await joinRoom(bob, 'room-transfer-nonhost');
+      await joinRoom(carol, 'room-transfer-nonhost');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-nonhost', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let transferReceived = false;
+      alice.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      // Bob (non-host) tries to transfer to carol — must be ignored
+      bob.emit('TRANSFER_HOST', { roomId: 'room-transfer-nonhost', newHostSocketId: carol.id });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(transferReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('ignores TRANSFER_HOST when newHostSocketId is not in the room', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-absent');
+      await joinRoom(bob, 'room-transfer-absent');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-absent', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let transferReceived = false;
+      bob.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      // 'ghost-socket-id' is not in the room
+      alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-absent', newHostSocketId: 'ghost-socket-id' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(transferReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores TRANSFER_HOST from a non-member socket', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-intruder');
+      alice.emit('PLAY', { roomId: 'room-transfer-intruder', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let transferReceived = false;
+      alice.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      intruder.emit('TRANSFER_HOST', { roomId: 'room-transfer-intruder', newHostSocketId: alice.id });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(transferReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('join_room ack includes socketId', async () => {
+      const alice = await connect();
+      const ack = await joinRoom(alice, 'room-socketid');
+      expect(ack.socketId).toBe(alice.id);
+      alice.disconnect();
+    });
+  });
 });

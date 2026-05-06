@@ -105,8 +105,12 @@ class PlayerViewModel
         /**
          * `true` when this client is the session host (i.e. no deep-link room ID was provided).
          * Only the host emits PLAY / PAUSE / SEEK / SYNC_HEARTBEAT events to the server.
+         *
+         * This value starts as the client-side determination (whether a deep-link roomId was
+         * provided), and is updated dynamically when a [SyncEvent.HostTransferred] event is
+         * received — allowing the host role to be transferred to any participant at runtime.
          */
-        internal val isHost: Boolean
+        internal var isHost: Boolean
 
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
@@ -169,8 +173,25 @@ class PlayerViewModel
             // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
-                    if (event is SyncEvent.RoomClosed) {
-                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    when (event) {
+                        is SyncEvent.RoomClosed -> {
+                            _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        }
+                        is SyncEvent.HostTransferred -> {
+                            isHost = event.isNowHost
+                            _uiState.update { it.copy(isHost = event.isNowHost) }
+                            if (event.isNowHost) {
+                                // New host should start listening for incoming sync
+                                // commands from the server — stop the receiver so
+                                // we don't apply our own future emissions to ourselves.
+                                playbackSyncReceiver.stopListening()
+                            } else {
+                                // Former host becomes a guest: start receiving commands.
+                                playbackSyncReceiver.startListening()
+                                stopHeartbeat()
+                            }
+                        }
+                        else -> Unit
                     }
                 }
             }
@@ -291,6 +312,20 @@ class PlayerViewModel
         fun onUserSeeked(positionMs: Long) {
             if (!isHost) return
             syncEmitter.emitSeek(roomId, positionMs)
+        }
+
+        /**
+         * Transfers the host role to the participant identified by [newHostSocketId].
+         *
+         * No-op when the local user is not the current host.  The server validates
+         * the request and broadcasts [com.musync.sync.SocketEvents.HOST_TRANSFERRED]
+         * to all room members on success.
+         *
+         * @param newHostSocketId The socket ID of the room member to promote to host.
+         */
+        fun onTransferHost(newHostSocketId: String) {
+            if (!isHost) return
+            sessionRepository.transferHost(roomId, newHostSocketId)
         }
 
         /**

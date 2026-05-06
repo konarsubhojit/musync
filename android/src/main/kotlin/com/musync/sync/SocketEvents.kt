@@ -10,4 +10,6 @@ object SocketEvents {
     const val PLAY = "PLAY"
     const val PAUSE = "PAUSE"
     const val SEEK = "SEEK"
+    const val TRANSFER_HOST = "TRANSFER_HOST"
+    const val HOST_TRANSFERRED = "HOST_TRANSFERRED"
 }

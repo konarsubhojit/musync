@@ -11,4 +11,12 @@ sealed class SyncEvent {
 
     /** Emitted when the host ends the session for all participants. */
     data object RoomClosed : SyncEvent()
+
+    /**
+     * Emitted when the host role is transferred to a different participant.
+     *
+     * @param isNowHost `true` when the local user is the newly promoted host;
+     *                  `false` when the local user's host role has been revoked.
+     */
+    data class HostTransferred(val isNowHost: Boolean) : SyncEvent()
 }

@@ -228,7 +228,9 @@ function createApp(options = {}) {
       if (typeof ack === 'function') {
         try {
           const roomData = await roomStore.getRoom(roomId);
-          ack({ ok: true, state: roomData ?? null });
+          // Include the socket's own ID so the client can determine its role
+          // (e.g. compare against state.hostId after a host transfer).
+          ack({ ok: true, state: roomData ?? null, socketId: socket.id });
         } catch (err) {
           console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
           ack({ error: 'failed to load room state' });
@@ -333,6 +335,8 @@ function createApp(options = {}) {
     // ── PLAY ───────────────────────────────────────────────────────────────
     // Tells every other room member to start playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit PLAY; events from non-host sockets are silently
+    // dropped.  If no room state exists yet, the sender becomes the host.
     socket.on('PLAY', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -340,6 +344,8 @@ function createApp(options = {}) {
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
       try {
+        const existing = await roomStore.getRoom(roomId);
+        if (existing?.hostId && existing.hostId !== socket.id) return;
         const roomData = await updateRoomState(socket.id, roomId, true, pos);
         socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
       } catch (err) {
@@ -350,6 +356,7 @@ function createApp(options = {}) {
     // ── PAUSE ──────────────────────────────────────────────────────────────
     // Tells every other room member to pause playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit PAUSE.
     socket.on('PAUSE', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -357,6 +364,8 @@ function createApp(options = {}) {
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
       try {
+        const existing = await roomStore.getRoom(roomId);
+        if (existing?.hostId && existing.hostId !== socket.id) return;
         const roomData = await updateRoomState(socket.id, roomId, false, pos);
         socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
       } catch (err) {
@@ -367,6 +376,7 @@ function createApp(options = {}) {
     // ── SEEK ───────────────────────────────────────────────────────────────
     // Tells every other room member to seek to the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit SEEK.
     socket.on('SEEK', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -377,11 +387,39 @@ function createApp(options = {}) {
         // Preserve the current isPlaying flag; default to false (paused) when
         // no prior PLAY/PAUSE event has established room state yet.
         const existing = await roomStore.getRoom(roomId);
+        if (existing?.hostId && existing.hostId !== socket.id) return;
         const isPlaying = existing?.isPlaying ?? false;
         const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
         socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
       } catch (err) {
         console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
+
+    // ── TRANSFER_HOST ───────────────────────────────────────────────────────
+    // Allows the current host to hand off control to another room member.
+    // Expected payload: { roomId: string, newHostSocketId: string }
+    // After a successful transfer the server broadcasts HOST_TRANSFERRED to all
+    // room members (including both the old and new hosts) so clients can update
+    // their local state accordingly.
+    socket.on('TRANSFER_HOST', async (payload) => {
+      const { roomId, newHostSocketId } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof newHostSocketId !== 'string' || newHostSocketId.trim() === '') return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        if (!existing) return;
+        // Only the current host can transfer control.
+        if (existing.hostId !== socket.id) return;
+        // Verify the new host is actually in the room.
+        const sockets = await io.in(roomId).fetchSockets();
+        if (!sockets.some((s) => s.id === newHostSocketId)) return;
+        await roomStore.setRoom(roomId, { ...existing, hostId: newHostSocketId, updatedAt: Date.now() });
+        io.to(roomId).emit('HOST_TRANSFERRED', { newHostSocketId });
+        console.log(`[socket] TRANSFER_HOST  from=${socket.id}  to=${newHostSocketId}  room=${roomId}`);
+      } catch (err) {
+        console.error(`[socket] TRANSFER_HOST failed  id=${socket.id}  room=${roomId}:`, err);
       }
     });
 

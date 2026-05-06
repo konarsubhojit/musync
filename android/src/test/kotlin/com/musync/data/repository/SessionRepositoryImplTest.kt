@@ -6,6 +6,7 @@ import com.musync.data.model.SyncEvent
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.verify
 import io.socket.client.Socket
 import io.socket.emitter.Emitter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -13,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -25,6 +27,9 @@ class SessionRepositoryImplTest {
 
     /** Stores the ROOM_CLOSED listener registered by the repository so tests can invoke it. */
     private var roomClosedListener: Emitter.Listener? = null
+
+    /** Stores the HOST_TRANSFERRED listener registered by the repository so tests can invoke it. */
+    private var hostTransferredListener: Emitter.Listener? = null
 
     private val hostSession =
         Session(
@@ -43,10 +48,18 @@ class SessionRepositoryImplTest {
     @Before
     fun setUp() {
         socket = mockk(relaxed = true)
+        every { socket.id() } returns "my-socket-id"
+
         // Capture the ROOM_CLOSED listener so tests can simulate the server event.
-        val listenerSlot = slot<Emitter.Listener>()
-        every { socket.on("ROOM_CLOSED", capture(listenerSlot)) } answers {
-            roomClosedListener = listenerSlot.captured
+        val roomClosedSlot = slot<Emitter.Listener>()
+        every { socket.on("ROOM_CLOSED", capture(roomClosedSlot)) } answers {
+            roomClosedListener = roomClosedSlot.captured
+            socket
+        }
+        // Capture the HOST_TRANSFERRED listener so tests can simulate the server event.
+        val hostTransferredSlot = slot<Emitter.Listener>()
+        every { socket.on("HOST_TRANSFERRED", capture(hostTransferredSlot)) } answers {
+            hostTransferredListener = hostTransferredSlot.captured
             socket
         }
         repository = SessionRepositoryImpl(socket)
@@ -219,5 +232,76 @@ class SessionRepositoryImplTest {
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.RoomClosed, emitted.first())
             assertTrue("Session should be cleared after ROOM_CLOSED", repository.session.value == null)
+        }
+
+    // ------------------------------------------------------------------
+    // HOST_TRANSFERRED: local user is the new host
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits HostTransferred(isNowHost=true) when socket id matches newHostSocketId`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("newHostSocketId", "my-socket-id") }
+                    hostTransferredListener?.call(payload)
+                }
+
+            assertEquals(1, emitted.size)
+            assertEquals(SyncEvent.HostTransferred(isNowHost = true), emitted.first())
+        }
+
+    // ------------------------------------------------------------------
+    // HOST_TRANSFERRED: local user is NOT the new host
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits HostTransferred(isNowHost=false) when socket id does not match newHostSocketId`() =
+        runTest {
+            repository.joinSession(hostSession)
+
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("newHostSocketId", "other-socket-id") }
+                    hostTransferredListener?.call(payload)
+                }
+
+            assertEquals(1, emitted.size)
+            assertEquals(SyncEvent.HostTransferred(isNowHost = false), emitted.first())
+        }
+
+    // ------------------------------------------------------------------
+    // HOST_TRANSFERRED: missing payload is a no-op
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `does not emit HostTransferred when HOST_TRANSFERRED payload is missing newHostSocketId`() =
+        runTest {
+            repository.joinSession(guestSession)
+
+            val emitted =
+                collectEvents {
+                    val emptyPayload = JSONObject()
+                    hostTransferredListener?.call(emptyPayload)
+                }
+
+            assertTrue("Empty payload should produce no events", emitted.isEmpty())
+        }
+
+    // ------------------------------------------------------------------
+    // transferHost emits TRANSFER_HOST socket event
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `transferHost emits TRANSFER_HOST socket event with correct payload`() =
+        runTest {
+            repository.transferHost("session-1", "new-host-socket-id")
+
+            val payloadSlot = slot<JSONObject>()
+            verify { socket.emit("TRANSFER_HOST", capture(payloadSlot)) }
+            assertEquals("session-1", payloadSlot.captured.getString("roomId"))
+            assertEquals("new-host-socket-id", payloadSlot.captured.getString("newHostSocketId"))
         }
 }
