@@ -212,6 +212,16 @@ function createApp(options = {}) {
     }
   }
 
+  /**
+   * Returns a non-empty display name from `raw`, falling back to `'Someone'`
+   * when the value is absent or blank.
+   * @param {unknown} raw
+   * @returns {string}
+   */
+  function sanitiseSenderName(raw) {
+    return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
+  }
+
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[socket] connected  id=${socket.id}`);
@@ -394,7 +404,7 @@ function createApp(options = {}) {
       if (!socket.rooms.has(roomId)) return;
       if (typeof text !== 'string' || text.trim() === '') return;
       if (typeof senderId !== 'string' || senderId.trim() === '') return;
-      const name = typeof senderName === 'string' && senderName.trim() !== '' ? senderName.trim() : 'Someone';
+      const name = sanitiseSenderName(senderName);
       socket.to(roomId).emit('CHAT_MESSAGE', {
         senderId: senderId.trim(),
         senderName: name,
@@ -421,7 +431,7 @@ function createApp(options = {}) {
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
       if (typeof senderId !== 'string' || senderId.trim() === '') return;
-      const name = typeof senderName === 'string' && senderName.trim() !== '' ? senderName.trim() : 'Someone';
+      const name = sanitiseSenderName(senderName);
       socket.to(roomId).emit('TYPING', { senderId: senderId.trim(), senderName: name });
     });
 

@@ -6,12 +6,19 @@ import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.sync.SocketEvents
 import io.socket.client.Socket
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -47,6 +54,12 @@ class SessionRepositoryImpl
             internal const val TYPING_TIMEOUT_MS = 3_000L
         }
 
+        /**
+         * Internal scope used for typing-timeout coroutines.  Uses [SupervisorJob] so
+         * that a cancelled child (typing timeout) does not cancel the whole scope.
+         */
+        private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
         private val _session = MutableStateFlow<Session?>(null)
         private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
         private val _chatMessages = MutableSharedFlow<ChatMessage>(extraBufferCapacity = CHAT_BUFFER_CAPACITY)
@@ -61,10 +74,10 @@ class SessionRepositoryImpl
         private val playNextEmitted = AtomicBoolean(false)
 
         /**
-         * Tracks pending "stop-typing" cleanup jobs keyed by senderId so that
-         * each new TYPING event from the same user resets the timer.
+         * Tracks pending "stop-typing" cleanup coroutines keyed by senderId so that
+         * each new TYPING event from the same user resets the timeout.
          */
-        private val typingTimers = mutableMapOf<String, java.util.Timer>()
+        private val typingJobs = mutableMapOf<String, Job>()
 
         init {
             socket.on(SocketEvents.ROOM_CLOSED) {
@@ -133,7 +146,7 @@ class SessionRepositoryImpl
             val roomId = _session.value?.sessionId
             playNextEmitted.set(false)
             _session.value = null
-            clearAllTypingTimers()
+            cancelAllTypingJobs()
             _typingUsers.value = emptySet()
             if (roomId != null) {
                 socket.emit(SocketEvents.LEAVE_ROOM, roomId)
@@ -218,24 +231,24 @@ class SessionRepositoryImpl
 
         private fun isLocalUserHost(session: Session): Boolean = session.localUserId == session.hostId
 
-        /** Resets (or starts) the inactivity timer that removes [senderId] from [_typingUsers]. */
+        /**
+         * Resets (or starts) the inactivity coroutine that removes [senderId] from
+         * [_typingUsers] after [TYPING_TIMEOUT_MS] ms of silence.
+         */
         private fun scheduleTypingTimeout(senderId: String) {
-            typingTimers[senderId]?.cancel()
-            val timer = java.util.Timer()
-            typingTimers[senderId] = timer
-            timer.schedule(
-                object : java.util.TimerTask() {
-                    override fun run() {
-                        _typingUsers.value = _typingUsers.value - senderId
-                        typingTimers.remove(senderId)
-                    }
-                },
-                TYPING_TIMEOUT_MS,
-            )
+            typingJobs[senderId]?.cancel()
+            typingJobs[senderId] =
+                repositoryScope.launch {
+                    delay(TYPING_TIMEOUT_MS)
+                    _typingUsers.value = _typingUsers.value - senderId
+                    typingJobs.remove(senderId)
+                }
         }
 
-        private fun clearAllTypingTimers() {
-            typingTimers.values.forEach { it.cancel() }
-            typingTimers.clear()
+        private fun cancelAllTypingJobs() {
+            typingJobs.values.forEach { it.cancel() }
+            typingJobs.clear()
         }
     }
+
+

@@ -510,6 +510,9 @@ private fun PlayerOverlayControls(
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 
+/** Quick-reaction emojis shown in the Room tab. */
+private val REACTION_EMOJIS = listOf("🔥", "❤️", "😂", "👏", "😮")
+
 @Composable
 private fun RoomTab(
     inviteLink: String,
@@ -589,7 +592,7 @@ private fun RoomTab(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("🔥", "❤️", "😂", "👏", "😮").forEach { emoji ->
+            REACTION_EMOJIS.forEach { emoji ->
                 Surface(
                     onClick = { onReactionSent(emoji) },
                     shape = CircleShape,

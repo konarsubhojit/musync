@@ -365,6 +365,9 @@ class PlayerViewModel
                         delay(TYPING_DEBOUNCE_MS)
                         sessionRepository.sendTyping(DEFAULT_DISPLAY_NAME)
                     }
+            } else {
+                // Input cleared — cancel any pending TYPING event to avoid misleading indicators.
+                typingDebounceJob?.cancel()
             }
         }
 
