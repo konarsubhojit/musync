@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
@@ -228,7 +229,7 @@ class PlayerViewModel
             heartbeatJob?.cancel()
             heartbeatJob =
                 viewModelScope.launch {
-                    while (true) {
+                    while (isActive) {
                         delay(HEARTBEAT_INTERVAL_MS)
                         val positionMs = (_uiState.value.currentSecond * 1000).toLong()
                         syncEmitter.emitHeartbeat(roomId, positionMs)
@@ -239,6 +240,11 @@ class PlayerViewModel
         private fun stopHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob = null
+        }
+
+        override fun onCleared() {
+            super.onCleared()
+            stopHeartbeat()
         }
 
         private fun scheduleControlsHide() {
