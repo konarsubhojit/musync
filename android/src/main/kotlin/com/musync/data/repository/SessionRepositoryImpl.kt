@@ -37,7 +37,7 @@ class SessionRepositoryImpl
         companion object {
             private const val EVENT_BUFFER_CAPACITY = 8
             private const val CHAT_BUFFER_CAPACITY = 64
-            internal const val TYPING_TIMEOUT_MS = 3_000L
+            private const val TYPING_TIMEOUT_MS = 3_000L
             private const val MAX_CHAT_MESSAGES = 200
         }
 

@@ -249,7 +249,7 @@ function createApp(options = {}) {
    * @returns {boolean}
    */
   function isAuthorisedPlayback(socketId, existing) {
-    if (existing?.democraticMode) return existing.democraticMode;
+    if (existing?.democraticMode === true) return true;
     return isAuthorisedHost(socketId, existing);
   }
 
