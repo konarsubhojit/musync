@@ -10,4 +10,6 @@ object SocketEvents {
     const val PLAY = "PLAY"
     const val PAUSE = "PAUSE"
     const val SEEK = "SEEK"
+    const val PEER_JOINED = "peer_joined"
+    const val PEER_LEFT = "peer_left"
 }
