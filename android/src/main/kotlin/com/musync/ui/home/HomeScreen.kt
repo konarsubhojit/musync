@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -36,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,7 +52,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.musync.R
+import com.musync.data.model.RecentRoom
 import com.musync.data.model.Track
+import com.musync.data.remote.RoomStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -140,6 +144,19 @@ fun HomeScreen(
                 }
             } else if (uiState.currentTrack == null) {
                 item { EmptyState() }
+            }
+
+            if (uiState.recentRooms.isNotEmpty()) {
+                item {
+                    RecentRoomsHeader(onClearHistory = viewModel::onClearHistory)
+                }
+                items(items = uiState.recentRooms, key = { it.roomId }) { room ->
+                    RecentRoomRow(
+                        room = room,
+                        status = uiState.recentRoomsStatus[room.roomId],
+                        onRejoin = { onJoinRoom(room.roomId) },
+                    )
+                }
             }
         }
     }
@@ -390,5 +407,95 @@ private fun EmptyState() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 32.dp),
         )
+    }
+}
+
+@Composable
+private fun RecentRoomsHeader(onClearHistory: () -> Unit) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.History,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            text = stringResource(R.string.home_recent_rooms),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onClearHistory) {
+            Text(
+                text = stringResource(R.string.home_recent_rooms_clear),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentRoomRow(
+    room: RecentRoom,
+    status: RoomStatus?,
+    onRejoin: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = room.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+                val statusText =
+                    when {
+                        status == null ->
+                            stringResource(R.string.home_recent_room_status_checking)
+                        status.active ->
+                            stringResource(
+                                R.string.home_recent_room_status_active,
+                                status.listenerCount,
+                            )
+                        else ->
+                            stringResource(R.string.home_recent_room_status_inactive)
+                    }
+                val statusColor =
+                    when {
+                        status?.active == true -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = statusColor,
+                )
+            }
+            OutlinedButton(
+                onClick = onRejoin,
+                modifier = Modifier.padding(start = 8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.home_recent_room_rejoin),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
     }
 }

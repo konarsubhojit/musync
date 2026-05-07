@@ -17,6 +17,12 @@
     <string name="home_empty_title">No active room</string>
     <string name="home_empty_subtitle">Create or join a room to start listening together</string>
     <string name="home_settings">Settings</string>
+    <string name="home_recent_rooms">Recent Rooms</string>
+    <string name="home_recent_rooms_clear">Clear</string>
+    <string name="home_recent_room_rejoin">Rejoin</string>
+    <string name="home_recent_room_status_checking">Checking status…</string>
+    <string name="home_recent_room_status_active">Active · %1$d listening</string>
+    <string name="home_recent_room_status_inactive">Inactive</string>
 
     <!-- Create room screen -->
     <string name="create_room_title">New Room</string>
@@ -37,11 +43,23 @@
     <string name="player_copy_link">Copy link</string>
     <string name="player_participants_title">Listeners</string>
     <string name="player_participant_you">You</string>
+    <string name="player_participant_you_initial">Y</string>
     <string name="player_participant_count">%1$d listening</string>
+    <string name="player_listener_initial">L</string>
+    <string name="player_listener_name">Listener %1$d</string>
+    <string name="player_peer_joined">A new listener joined the room</string>
+    <string name="player_peer_left">A listener left the room</string>
     <string name="player_queue_empty">Queue is empty. Tap + to add a track.</string>
     <string name="player_add_to_queue">Add to queue</string>
-    <string name="player_add_queue_label">Add YouTube link</string>
+    <string name="player_add_queue_label">Search YouTube or paste a link</string>
     <string name="player_add_queue_confirm">Add</string>
+    <string name="player_search_youtube">Search YouTube</string>
+    <string name="player_search_results">Search results</string>
+    <string name="player_search_error">Search failed. Check your connection and try again.</string>
+    <string name="player_remove_from_queue">Remove from queue</string>
+    <string name="player_skip_next">Skip to next</string>
+    <string name="player_move_up">Move up</string>
+    <string name="player_move_down">Move down</string>
     <string name="player_leave_dialog_title">Leave room?</string>
     <string name="player_leave_dialog_message_guest">You will be disconnected from this listening session.</string>
     <string name="player_leave_dialog_message_host">You can leave the room or end the session for all participants.</string>
@@ -49,6 +67,12 @@
     <string name="player_leave_dialog_cancel">Stay</string>
     <string name="player_leave_dialog_end_for_all">End for Everyone</string>
     <string name="player_room_closed_by_host">Room was closed by the host</string>
+
+    <!-- Chat -->
+    <string name="chat_empty_hint">No messages yet. Say something!</string>
+    <string name="chat_input_hint">Message…</string>
+    <string name="chat_send_button">Send</string>
+    <string name="chat_typing_indicator">Someone is typing…</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Settings</string>

@@ -79,6 +79,123 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── YouTube search proxy ──────────────────────────────────────────────────
+  describe('GET /api/youtube/search', () => {
+    const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
+      else process.env.YOUTUBE_API_KEY = originalApiKey;
+      // Restore the global fetch if it was replaced
+      global.fetch = originalFetch;
+    });
+
+    it('returns 503 when YOUTUBE_API_KEY is not configured', async () => {
+      delete process.env.YOUTUBE_API_KEY;
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({ error: expect.any(String) });
+    });
+
+    it('returns 400 when no query parameter is provided', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const res = await request(app).get('/api/youtube/search');
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: expect.any(String) });
+    });
+
+    it('returns 400 when the query parameter is blank', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const res = await request(app).get('/api/youtube/search?q=');
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 when the query exceeds 200 characters', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const longQuery = 'a'.repeat(201);
+      const res = await request(app).get(`/api/youtube/search?q=${longQuery}`);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 504 when the YouTube API request times out', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockRejectedValue(Object.assign(new Error('abort'), { name: 'AbortError' }));
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(504);
+    });
+
+    it('returns mapped items from the YouTube API response', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: { videoId: 'abc123' },
+              snippet: {
+                title: 'Test Video',
+                channelTitle: 'Test Channel',
+                thumbnails: {
+                  medium: { url: 'https://example.com/thumb.jpg' },
+                },
+              },
+            },
+          ],
+        }),
+      });
+      const res = await request(app).get('/api/youtube/search?q=test+song');
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0]).toEqual({
+        videoId: 'abc123',
+        title: 'Test Video',
+        channelTitle: 'Test Channel',
+        thumbnailUrl: 'https://example.com/thumb.jpg',
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('q=test+song'),
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
+    });
+
+    it('returns 502 when the YouTube API responds with an error status', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 });
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(502);
+    });
+
+    it('returns 500 when fetch throws', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockRejectedValue(new Error('network error'));
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(500);
+    });
+
+    it('falls back to default thumbnail when medium thumbnail is absent', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: { videoId: 'xyz' },
+              snippet: {
+                title: 'No Medium',
+                channelTitle: 'Channel',
+                thumbnails: { default: { url: 'https://example.com/default.jpg' } },
+              },
+            },
+          ],
+        }),
+      });
+      const res = await request(app).get('/api/youtube/search?q=fallback');
+      expect(res.status).toBe(200);
+      expect(res.body.items[0].thumbnailUrl).toBe('https://example.com/default.jpg');
+    });
+  });
+
   // ── Socket.IO helpers ─────────────────────────────────────────────────────
   function connect() {
     return new Promise((resolve) => {
@@ -124,6 +241,19 @@ describe('MuSync server', () => {
 
       const payload = await peerJoined;
       expect(payload).toMatchObject({ socketId: bob.id });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('includes memberCount in join ack', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      const aliceAck = await joinRoom(alice, 'room-membercount');
+      expect(aliceAck.memberCount).toBe(1);
+
+      const bobAck = await joinRoom(bob, 'room-membercount');
+      expect(bobAck.memberCount).toBe(2);
 
       alice.disconnect();
       bob.disconnect();
@@ -387,6 +517,47 @@ describe('MuSync server', () => {
       expect(ack.state).toBeNull();
 
       alice.disconnect();
+    });
+  });
+
+  // ── GET /room/:roomId/status ──────────────────────────────────────────────
+  describe('GET /room/:roomId/status', () => {
+    it('returns active=false and listenerCount=0 for an empty room', async () => {
+      const res = await request(app).get('/room/status-empty/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: false, listenerCount: 0 });
+    });
+
+    it('returns active=true with correct listenerCount while members are connected', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-status-active');
+      await joinRoom(bob, 'room-status-active');
+
+      const res = await request(app).get('/room/room-status-active/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: true, listenerCount: 2 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('returns active=false after all members leave', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-status-leave');
+      await leaveRoom(alice, 'room-status-leave');
+      // Allow time for the leave to propagate
+      await new Promise((r) => setTimeout(r, 50));
+
+      const res = await request(app).get('/room/room-status-leave/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ active: false, listenerCount: 0 });
+
+      alice.disconnect();
+    });
+
+    it('returns 400 for an invalid roomId', async () => {
+      const res = await request(app).get('/room/' + encodeURIComponent('<bad>') + '/status');
+      expect(res.status).toBe(400);
     });
   });
 
@@ -911,6 +1082,405 @@ describe('MuSync server', () => {
       const ack = await joinRoom(alice, 'room-socketid');
       expect(ack.socketId).toBe(alice.id);
       alice.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-noname');
+      await joinRoom(bob, 'room-chat-noname');
+
+      const bobReceived = once(bob, 'CHAT_MESSAGE');
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-noname',
+        text: 'Hello',
+      });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── REACTION ──────────────────────────────────────────────────────────────
+  describe('REACTION', () => {
+    it('relays an emoji reaction to other room members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-1');
+      await joinRoom(bob, 'room-reaction-1');
+
+      const bobReceived = once(bob, 'REACTION');
+      alice.emit('REACTION', { roomId: 'room-reaction-1', emoji: '🔥' });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ emoji: '🔥' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo the reaction back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-noecho');
+      await joinRoom(bob, 'room-reaction-noecho');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      alice.emit('REACTION', { roomId: 'room-reaction-noecho', emoji: '❤️' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a reaction from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-nonmember');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      intruder.emit('REACTION', { roomId: 'room-reaction-nonmember', emoji: '😂' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── TYPING ────────────────────────────────────────────────────────────────
+  describe('TYPING', () => {
+    it('relays a typing indicator to other room members with socket.id as senderId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-1');
+      await joinRoom(bob, 'room-typing-1');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', {
+        roomId: 'room-typing-1',
+        senderName: 'Alice',
+      });
+
+      const payload = await bobReceived;
+      // The server derives senderId from socket.id, not the client payload.
+      expect(payload).toMatchObject({ senderId: alice.id, senderName: 'Alice' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo typing back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noecho');
+      await joinRoom(bob, 'room-typing-noecho');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      alice.emit('TYPING', {
+        roomId: 'room-typing-noecho',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores typing from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-nonmember');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      intruder.emit('TYPING', {
+        roomId: 'room-typing-nonmember',
+        senderName: 'Intruder',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noname');
+      await joinRoom(bob, 'room-typing-noname');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', { roomId: 'room-typing-noname' });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── SET_DEMOCRATIC_MODE / DEMOCRATIC_MODE_CHANGED ─────────────────────────
+  describe('SET_DEMOCRATIC_MODE / DEMOCRATIC_MODE_CHANGED', () => {
+    it('host can enable democratic mode; broadcasts to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-1');
+      await joinRoom(bob, 'room-democratic-1');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'DEMOCRATIC_MODE_CHANGED');
+      const aliceReceived = once(alice, 'DEMOCRATIC_MODE_CHANGED');
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-1', enabled: true });
+
+      const [alicePayload, bobPayload] = await Promise.all([aliceReceived, bobReceived]);
+      expect(alicePayload).toMatchObject({ enabled: true });
+      expect(bobPayload).toMatchObject({ enabled: true });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('host can disable democratic mode', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-2');
+      await joinRoom(bob, 'room-democratic-2');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-2', enabled: true });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'DEMOCRATIC_MODE_CHANGED');
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-2', enabled: false });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ enabled: false });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host cannot set democratic mode', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-3');
+      await joinRoom(bob, 'room-democratic-3');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-3', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('DEMOCRATIC_MODE_CHANGED', () => { received = true; });
+      bob.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-3', enabled: true });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── PLAY/PAUSE/SEEK in democratic mode ────────────────────────────────────
+  describe('PLAY/PAUSE/SEEK in democratic mode', () => {
+    it('guest can send PLAY when democraticMode=true', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-play');
+      await joinRoom(bob, 'room-democratic-play');
+      await joinRoom(carol, 'room-democratic-play');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Enable democratic mode
+      await new Promise((resolve) => {
+        alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-play', enabled: true });
+        bob.once('DEMOCRATIC_MODE_CHANGED', resolve);
+      });
+
+      // Bob (guest) can now send PLAY
+      const carolReceived = once(carol, 'PLAY');
+      bob.emit('PLAY', { roomId: 'room-democratic-play', positionMs: 5000 });
+      const payload = await carolReceived;
+      expect(payload).toMatchObject({ positionMs: 5000 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('non-members still blocked from PLAY even in democratic mode', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-nonmember');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-nonmember', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-nonmember', enabled: true });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('PLAY', () => { received = true; });
+      intruder.emit('PLAY', { roomId: 'room-democratic-nonmember', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── SET_AUTO_APPROVE_QUEUE / AUTO_APPROVE_QUEUE_CHANGED ───────────────────
+  describe('SET_AUTO_APPROVE_QUEUE / AUTO_APPROVE_QUEUE_CHANGED', () => {
+    it('host can disable auto-approve; broadcasts to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-autoapprove-1');
+      await joinRoom(bob, 'room-autoapprove-1');
+
+      alice.emit('PLAY', { roomId: 'room-autoapprove-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'AUTO_APPROVE_QUEUE_CHANGED');
+      const aliceReceived = once(alice, 'AUTO_APPROVE_QUEUE_CHANGED');
+      alice.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-autoapprove-1', enabled: false });
+
+      const [alicePayload, bobPayload] = await Promise.all([aliceReceived, bobReceived]);
+      expect(alicePayload).toMatchObject({ enabled: false });
+      expect(bobPayload).toMatchObject({ enabled: false });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host cannot set auto-approve', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-autoapprove-2');
+      await joinRoom(bob, 'room-autoapprove-2');
+
+      alice.emit('PLAY', { roomId: 'room-autoapprove-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('AUTO_APPROVE_QUEUE_CHANGED', () => { received = true; });
+      bob.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-autoapprove-2', enabled: false });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── REQUEST_QUEUE_ADD ─────────────────────────────────────────────────────
+  describe('REQUEST_QUEUE_ADD', () => {
+    it('auto-approves and broadcasts QUEUE_UPDATED when autoApproveQueue=true', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-queueadd-auto');
+      await joinRoom(bob, 'room-queueadd-auto');
+
+      alice.emit('PLAY', { roomId: 'room-queueadd-auto', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const aliceReceived = once(alice, 'QUEUE_UPDATED');
+      bob.emit('REQUEST_QUEUE_ADD', {
+        roomId: 'room-queueadd-auto',
+        track: { id: 'track-1', title: 'My Song' },
+      });
+
+      const queue = await aliceReceived;
+      expect(Array.isArray(queue)).toBe(true);
+      expect(queue.some((t) => t.id === 'track-1')).toBe(true);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('sends QUEUE_ADD_REQUEST to host only when autoApproveQueue=false', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+      await joinRoom(alice, 'room-queueadd-manual');
+      await joinRoom(bob, 'room-queueadd-manual');
+      await joinRoom(carol, 'room-queueadd-manual');
+
+      alice.emit('PLAY', { roomId: 'room-queueadd-manual', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Disable auto-approve
+      await new Promise((resolve) => {
+        alice.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-queueadd-manual', enabled: false });
+        bob.once('AUTO_APPROVE_QUEUE_CHANGED', resolve);
+      });
+
+      const aliceRequest = once(alice, 'QUEUE_ADD_REQUEST');
+      let carolReceived = false;
+      carol.on('QUEUE_ADD_REQUEST', () => { carolReceived = true; });
+
+      bob.emit('REQUEST_QUEUE_ADD', {
+        roomId: 'room-queueadd-manual',
+        track: { id: 'track-2', title: 'Another Song' },
+      });
+
+      const payload = await aliceRequest;
+      expect(payload).toMatchObject({ id: 'track-2', title: 'Another Song' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(carolReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+  });
+
+  // ── APPROVE_QUEUE_ADD ─────────────────────────────────────────────────────
+  describe('APPROVE_QUEUE_ADD', () => {
+    it('host approves and QUEUE_UPDATED is broadcast to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-approve-1');
+      await joinRoom(bob, 'room-approve-1');
+
+      alice.emit('PLAY', { roomId: 'room-approve-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'QUEUE_UPDATED');
+      const aliceReceived = once(alice, 'QUEUE_UPDATED');
+      alice.emit('APPROVE_QUEUE_ADD', {
+        roomId: 'room-approve-1',
+        track: { id: 'approved-track', title: 'Approved Song' },
+      });
+
+      const [aliceQueue, bobQueue] = await Promise.all([aliceReceived, bobReceived]);
+      expect(aliceQueue.some((t) => t.id === 'approved-track')).toBe(true);
+      expect(bobQueue.some((t) => t.id === 'approved-track')).toBe(true);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host APPROVE_QUEUE_ADD is ignored', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-approve-2');
+      await joinRoom(bob, 'room-approve-2');
+
+      alice.emit('PLAY', { roomId: 'room-approve-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('QUEUE_UPDATED', () => { received = true; });
+      bob.emit('APPROVE_QUEUE_ADD', {
+        roomId: 'room-approve-2',
+        track: { id: 'sneaky-track', title: 'Sneaky Song' },
+      });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
     });
   });
 });
