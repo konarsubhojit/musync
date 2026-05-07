@@ -439,6 +439,139 @@ class PlayerViewModelTest {
             verify(exactly = 0) { receiver.attachPlayer(any(), any(), any()) }
         }
 
+    // --- Queue management ---
+
+    @Test
+    fun `onRemoveFromQueue removes track from queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onRemoveFromQueue(track1.id)
+            advanceUntilIdle()
+
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2))) }
+        }
+
+    @Test
+    fun `onRemoveFromQueue is a no-op for guest`() =
+        runTest {
+            val track = sampleTrack
+            val repo = FakeMusicRepository(initialQueue = listOf(track))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onRemoveFromQueue(track.id)
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `onMoveQueueItem reorders queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onMoveQueueItem(fromIndex = 0, toIndex = 1)
+            advanceUntilIdle()
+
+            assertEquals(listOf(track2, track1), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2, track1))) }
+        }
+
+    @Test
+    fun `onMoveQueueItem is a no-op for out-of-bounds indices`() =
+        runTest {
+            val track = sampleTrack
+            val repo = FakeMusicRepository(initialQueue = listOf(track))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onMoveQueueItem(fromIndex = 0, toIndex = 5)
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `onSkipToNext loads next track from queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onSkipToNext()
+            advanceUntilIdle()
+
+            assertEquals(track1.youtubeVideoId, viewModel.uiState.value.videoId)
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2))) }
+        }
+
+    @Test
+    fun `onSkipToNext is a no-op when queue is empty`() =
+        runTest {
+            val repo = FakeMusicRepository()
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onSkipToNext()
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `PlayNext event triggers auto-advance to next queued track`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val sessionRepo = FakeSessionRepository()
+            val viewModel =
+                buildHostViewModel(musicRepository = repo, sessionRepository = sessionRepo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            sessionRepo.emitPlayNext()
+            advanceUntilIdle()
+
+            assertEquals(track1.youtubeVideoId, viewModel.uiState.value.videoId)
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+        }
+
+    @Test
+    fun `PlayNext event is no-op when queue is empty`() =
+        runTest {
+            val repo = FakeMusicRepository()
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val sessionRepo = FakeSessionRepository()
+            val viewModel =
+                buildHostViewModel(musicRepository = repo, sessionRepository = sessionRepo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            sessionRepo.emitPlayNext()
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
     // --- Participant count ---
 
     @Test
@@ -543,16 +676,24 @@ class PlayerViewModelTest {
 
     private class FakeMusicRepository(
         initialTrack: Track? = null,
+        initialQueue: List<Track> = emptyList(),
     ) : MusicRepository {
         private val trackFlow = MutableStateFlow(initialTrack)
+        private val queueFlow = MutableStateFlow(initialQueue)
 
         override val currentTrack: Flow<Track?> = trackFlow
 
-        override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+        override val queue: Flow<List<Track>> = queueFlow
 
-        override fun updateQueue(tracks: List<Track>) = Unit
+        override fun updateQueue(tracks: List<Track>) {
+            queueFlow.value = tracks
+        }
 
-        override fun addToQueue(track: Track) = Unit
+        override fun addToQueue(track: Track) {
+            queueFlow.value = queueFlow.value + track
+        }
+
+        fun currentQueueSnapshot(): List<Track> = queueFlow.value
     }
 
     private class FakeSessionRepository : SessionRepository {
@@ -579,6 +720,10 @@ class PlayerViewModelTest {
 
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
+        }
+
+        fun emitPlayNext() {
+            _events.tryEmit(SyncEvent.PlayNext("test-session"))
         }
 
         fun emitMembersSnapshot(count: Int) {
