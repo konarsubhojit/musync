@@ -2,11 +2,13 @@ package com.musync.ui.player
 
 import androidx.lifecycle.SavedStateHandle
 import com.musync.data.model.PlayerState
+import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
@@ -24,6 +26,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -559,6 +562,212 @@ class PlayerViewModelTest {
             assertFalse(viewModel.uiState.value.addToQueueSheetVisible)
         }
 
+    // --- Queue management ---
+
+    @Test
+    fun `onRemoveFromQueue removes track from queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onRemoveFromQueue(track1.id)
+            advanceUntilIdle()
+
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2))) }
+        }
+
+    @Test
+    fun `onRemoveFromQueue is a no-op for guest`() =
+        runTest {
+            val track = sampleTrack
+            val repo = FakeMusicRepository(initialQueue = listOf(track))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildViewModelWithRoomId(roomId = "room-g", musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onRemoveFromQueue(track.id)
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `onMoveQueueItem reorders queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onMoveQueueItem(fromIndex = 0, toIndex = 1)
+            advanceUntilIdle()
+
+            assertEquals(listOf(track2, track1), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2, track1))) }
+        }
+
+    @Test
+    fun `onMoveQueueItem is a no-op for out-of-bounds indices`() =
+        runTest {
+            val track = sampleTrack
+            val repo = FakeMusicRepository(initialQueue = listOf(track))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onMoveQueueItem(fromIndex = 0, toIndex = 5)
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `onSkipToNext loads next track from queue and emits QUEUE_UPDATED`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onSkipToNext()
+            advanceUntilIdle()
+
+            assertEquals(track1.youtubeVideoId, viewModel.uiState.value.videoId)
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+            verify { emitter.emitQueueUpdated(any(), eq(listOf(track2))) }
+        }
+
+    @Test
+    fun `onSkipToNext is a no-op when queue is empty`() =
+        runTest {
+            val repo = FakeMusicRepository()
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            viewModel.onSkipToNext()
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    @Test
+    fun `PlayNext event triggers auto-advance to next queued track`() =
+        runTest {
+            val track1 = sampleTrack
+            val track2 = sampleTrack.copy(id = "2", title = "Track 2", youtubeVideoId = "vid2")
+            val repo = FakeMusicRepository(initialQueue = listOf(track1, track2))
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val sessionRepo = FakeSessionRepository()
+            val viewModel =
+                buildHostViewModel(musicRepository = repo, sessionRepository = sessionRepo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            sessionRepo.emitPlayNext()
+            advanceUntilIdle()
+
+            assertEquals(track1.youtubeVideoId, viewModel.uiState.value.videoId)
+            assertEquals(listOf(track2), repo.currentQueueSnapshot())
+        }
+
+    @Test
+    fun `PlayNext event is no-op when queue is empty`() =
+        runTest {
+            val repo = FakeMusicRepository()
+            val emitter = mockk<SyncEmitter>(relaxed = true)
+            val sessionRepo = FakeSessionRepository()
+            val viewModel =
+                buildHostViewModel(musicRepository = repo, sessionRepository = sessionRepo, syncEmitter = emitter)
+            advanceUntilIdle()
+
+            sessionRepo.emitPlayNext()
+            advanceUntilIdle()
+
+            verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
+        }
+
+    // --- Participant count ---
+
+    @Test
+    fun `MembersSnapshot event sets participantCount`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitMembersSnapshot(5)
+            advanceUntilIdle()
+            assertEquals(5, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerJoined event increments participantCount`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            val initialCount = viewModel.uiState.value.participantCount
+            sessionRepo.emitPeerJoined()
+            advanceUntilIdle()
+            assertEquals(initialCount + 1, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerLeft event decrements participantCount but never below 1`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            // Emit a PeerLeft when count is already 1 — should clamp to 1
+            sessionRepo.emitPeerLeft()
+            advanceUntilIdle()
+            assertEquals(1, viewModel.uiState.value.participantCount)
+        }
+
+    @Test
+    fun `PeerJoined event sets presenceEvent to PeerJoined`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerJoined()
+            // runCurrent flushes the event collection without advancing past the reset timer.
+            runCurrent()
+            assertEquals(PresenceEvent.PeerJoined, viewModel.uiState.value.presenceEvent)
+        }
+
+    @Test
+    fun `PeerLeft event sets presenceEvent to PeerLeft`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerLeft()
+            runCurrent()
+            assertEquals(PresenceEvent.PeerLeft, viewModel.uiState.value.presenceEvent)
+        }
+
+    @Test
+    fun `presenceEvent resets to null after PRESENCE_EVENT_DURATION_MS`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitPeerJoined()
+            runCurrent()
+            assertNotNull(viewModel.uiState.value.presenceEvent)
+            advanceTimeBy(PlayerViewModel.PRESENCE_EVENT_DURATION_MS + 1)
+            assertNull(viewModel.uiState.value.presenceEvent)
+        }
+
     // --- Helpers ---
 
     private fun buildHostViewModel(
@@ -567,6 +776,7 @@ class PlayerViewModelTest {
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
+        recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(),
         musicRepository,
@@ -574,6 +784,7 @@ class PlayerViewModelTest {
         syncEmitter,
         playbackSyncReceiver,
         youTubeSearchRepository,
+        recentRoomsRepository,
     )
 
     /**
@@ -587,6 +798,7 @@ class PlayerViewModelTest {
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
+        recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
@@ -594,29 +806,44 @@ class PlayerViewModelTest {
         syncEmitter,
         playbackSyncReceiver,
         youTubeSearchRepository,
+        recentRoomsRepository,
     )
 
     // --- Fake repositories ---
 
     private class FakeMusicRepository(
         initialTrack: Track? = null,
+        initialQueue: List<Track> = emptyList(),
     ) : MusicRepository {
         private val trackFlow = MutableStateFlow(initialTrack)
+        private val queueFlow = MutableStateFlow(initialQueue)
 
         override val currentTrack: Flow<Track?> = trackFlow
 
-        override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+        override val queue: Flow<List<Track>> = queueFlow
 
-        override fun updateQueue(tracks: List<Track>) = Unit
+        override fun updateQueue(tracks: List<Track>) {
+            queueFlow.value = tracks
+        }
 
-        override fun addToQueue(track: Track) = Unit
+        override fun addToQueue(track: Track) {
+            queueFlow.value = queueFlow.value + track
+        }
+
+        fun currentQueueSnapshot(): List<Track> = queueFlow.value
     }
 
     private class FakeSessionRepository : SessionRepository {
         private val _session = MutableStateFlow<Session?>(null)
         private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
+        private val _chatMessages = MutableSharedFlow<com.musync.data.model.ChatMessage>(extraBufferCapacity = 64)
+        private val _reactions = MutableSharedFlow<String>(extraBufferCapacity = 64)
+        private val _typingUsers = MutableStateFlow<Set<String>>(emptySet())
         override val session: StateFlow<Session?> = _session
         override val events: SharedFlow<SyncEvent> = _events
+        override val chatMessages: SharedFlow<com.musync.data.model.ChatMessage> = _chatMessages
+        override val reactions: SharedFlow<String> = _reactions
+        override val typingUsers: StateFlow<Set<String>> = _typingUsers
 
         var endSessionCalled = false
 
@@ -634,9 +861,45 @@ class PlayerViewModelTest {
             endSessionCalled = true
         }
 
+        override fun sendChatMessage(
+            text: String,
+            senderName: String,
+        ) = Unit
+
+        override fun sendReaction(emoji: String) = Unit
+
+        override fun sendTyping(senderName: String) = Unit
+
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)
         }
+
+        fun emitPlayNext() {
+            _events.tryEmit(SyncEvent.PlayNext("test-session"))
+        }
+
+        fun emitMembersSnapshot(count: Int) {
+            _events.tryEmit(SyncEvent.MembersSnapshot(count))
+        }
+
+        fun emitPeerJoined() {
+            _events.tryEmit(SyncEvent.PeerJoined)
+        }
+
+        fun emitPeerLeft() {
+            _events.tryEmit(SyncEvent.PeerLeft)
+        }
+    }
+
+    private class FakeRecentRoomsRepository : RecentRoomsRepository {
+        override fun getRecentRooms() = emptyList<RecentRoom>()
+
+        override fun addOrUpdateRoom(
+            roomId: String,
+            displayName: String,
+        ) = Unit
+
+        override fun clearHistory() = Unit
     }
 
     /**

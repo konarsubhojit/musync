@@ -16,6 +16,10 @@ export default [
         console: 'readonly',
         URL: 'readonly',
         fetch: 'readonly',
+        AbortController: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        parseInt: 'readonly',
       },
     },
     rules: {

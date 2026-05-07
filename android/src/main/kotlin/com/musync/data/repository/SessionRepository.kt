@@ -1,5 +1,6 @@
 package com.musync.data.repository
 
+import com.musync.data.model.ChatMessage
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
@@ -12,6 +13,19 @@ interface SessionRepository {
 
     /** A flow of outgoing sync events to be forwarded to the server. */
     val events: SharedFlow<SyncEvent>
+
+    /** A flow of chat messages received from other room members, plus echoes of sent messages. */
+    val chatMessages: SharedFlow<ChatMessage>
+
+    /** A flow of ephemeral emoji reactions received from other room members. */
+    val reactions: SharedFlow<String>
+
+    /**
+     * A flow of user IDs currently typing in the room.
+     *
+     * Entries are removed automatically after a short inactivity window.
+     */
+    val typingUsers: StateFlow<Set<String>>
 
     /**
      * Called whenever the player state changes.
@@ -39,4 +53,37 @@ interface SessionRepository {
      * the local session state is cleared when `ROOM_CLOSED` is received.
      */
     fun endSession()
+
+    /**
+     * Sends a chat message to all other members of the current room.
+     *
+     * Also emits the message locally (with [ChatMessage.isLocal] = `true`) so
+     * the sender sees their own message immediately without waiting for a server
+     * echo.  No-op when there is no active session.
+     *
+     * @param text        The message text to send.
+     * @param senderName  Display name shown alongside the message.
+     */
+    fun sendChatMessage(
+        text: String,
+        senderName: String,
+    )
+
+    /**
+     * Broadcasts an ephemeral emoji reaction to all other members.
+     *
+     * No-op when there is no active session.
+     *
+     * @param emoji The emoji string to broadcast (e.g. "🔥").
+     */
+    fun sendReaction(emoji: String)
+
+    /**
+     * Notifies other room members that the local user is composing a message.
+     *
+     * No-op when there is no active session.
+     *
+     * @param senderName Display name of the typing user.
+     */
+    fun sendTyping(senderName: String)
 }

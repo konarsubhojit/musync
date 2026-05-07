@@ -111,6 +111,20 @@ describe('MuSync server', () => {
       expect(res.status).toBe(400);
     });
 
+    it('returns 400 when the query exceeds 200 characters', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const longQuery = 'a'.repeat(201);
+      const res = await request(app).get(`/api/youtube/search?q=${longQuery}`);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 504 when the YouTube API request times out', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockRejectedValue(Object.assign(new Error('abort'), { name: 'AbortError' }));
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(504);
+    });
+
     it('returns mapped items from the YouTube API response', async () => {
       process.env.YOUTUBE_API_KEY = 'fake-key';
       global.fetch = jest.fn().mockResolvedValue({
@@ -141,6 +155,7 @@ describe('MuSync server', () => {
       });
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining('q=test+song'),
+        expect.objectContaining({ signal: expect.any(Object) }),
       );
     });
 
@@ -226,6 +241,19 @@ describe('MuSync server', () => {
 
       const payload = await peerJoined;
       expect(payload).toMatchObject({ socketId: bob.id });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('includes memberCount in join ack', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      const aliceAck = await joinRoom(alice, 'room-membercount');
+      expect(aliceAck.memberCount).toBe(1);
+
+      const bobAck = await joinRoom(bob, 'room-membercount');
+      expect(bobAck.memberCount).toBe(2);
 
       alice.disconnect();
       bob.disconnect();
@@ -492,6 +520,47 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── GET /room/:roomId/status ──────────────────────────────────────────────
+  describe('GET /room/:roomId/status', () => {
+    it('returns active=false and listenerCount=0 for an empty room', async () => {
+      const res = await request(app).get('/room/status-empty/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: false, listenerCount: 0 });
+    });
+
+    it('returns active=true with correct listenerCount while members are connected', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-status-active');
+      await joinRoom(bob, 'room-status-active');
+
+      const res = await request(app).get('/room/room-status-active/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: true, listenerCount: 2 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('returns active=false after all members leave', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-status-leave');
+      await leaveRoom(alice, 'room-status-leave');
+      // Allow time for the leave to propagate
+      await new Promise((r) => setTimeout(r, 50));
+
+      const res = await request(app).get('/room/room-status-leave/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ active: false, listenerCount: 0 });
+
+      alice.disconnect();
+    });
+
+    it('returns 400 for an invalid roomId', async () => {
+      const res = await request(app).get('/room/' + encodeURIComponent('<bad>') + '/status');
+      expect(res.status).toBe(400);
+    });
+  });
+
   // ── positionMs validation ─────────────────────────────────────────────────
   describe('positionMs validation', () => {
     it.each([
@@ -735,6 +804,233 @@ describe('MuSync server', () => {
       alice.disconnect();
       bob.disconnect();
       carol.disconnect();
+    });
+  });
+
+  // ── CHAT_MESSAGE ──────────────────────────────────────────────────────────
+  describe('CHAT_MESSAGE', () => {
+    it('relays a chat message to other room members with socket.id as senderId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-1');
+      await joinRoom(bob, 'room-chat-1');
+
+      const bobReceived = once(bob, 'CHAT_MESSAGE');
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-1',
+        text: 'Hello!',
+        senderName: 'Alice',
+      });
+
+      const payload = await bobReceived;
+      // The server derives senderId from socket.id, not the client payload.
+      expect(payload).toMatchObject({
+        senderId: alice.id,
+        senderName: 'Alice',
+        text: 'Hello!',
+      });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo the message back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-noecho');
+      await joinRoom(bob, 'room-chat-noecho');
+
+      let aliceReceived = false;
+      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-noecho',
+        text: 'Hi',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a message with blank text', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-blank');
+      await joinRoom(bob, 'room-chat-blank');
+
+      let bobReceived = false;
+      bob.on('CHAT_MESSAGE', () => { bobReceived = true; });
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-blank',
+        text: '   ',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(bobReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a message from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-nonmember');
+
+      let aliceReceived = false;
+      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
+      intruder.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-nonmember',
+        text: 'Sneaky',
+        senderName: 'Intruder',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-chat-noname');
+      await joinRoom(bob, 'room-chat-noname');
+
+      const bobReceived = once(bob, 'CHAT_MESSAGE');
+      alice.emit('CHAT_MESSAGE', {
+        roomId: 'room-chat-noname',
+        text: 'Hello',
+      });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── REACTION ──────────────────────────────────────────────────────────────
+  describe('REACTION', () => {
+    it('relays an emoji reaction to other room members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-1');
+      await joinRoom(bob, 'room-reaction-1');
+
+      const bobReceived = once(bob, 'REACTION');
+      alice.emit('REACTION', { roomId: 'room-reaction-1', emoji: '🔥' });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ emoji: '🔥' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo the reaction back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-noecho');
+      await joinRoom(bob, 'room-reaction-noecho');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      alice.emit('REACTION', { roomId: 'room-reaction-noecho', emoji: '❤️' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores a reaction from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-reaction-nonmember');
+
+      let aliceReceived = false;
+      alice.on('REACTION', () => { aliceReceived = true; });
+      intruder.emit('REACTION', { roomId: 'room-reaction-nonmember', emoji: '😂' });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── TYPING ────────────────────────────────────────────────────────────────
+  describe('TYPING', () => {
+    it('relays a typing indicator to other room members with socket.id as senderId', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-1');
+      await joinRoom(bob, 'room-typing-1');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', {
+        roomId: 'room-typing-1',
+        senderName: 'Alice',
+      });
+
+      const payload = await bobReceived;
+      // The server derives senderId from socket.id, not the client payload.
+      expect(payload).toMatchObject({ senderId: alice.id, senderName: 'Alice' });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('does not echo typing back to the sender', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noecho');
+      await joinRoom(bob, 'room-typing-noecho');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      alice.emit('TYPING', {
+        roomId: 'room-typing-noecho',
+        senderName: 'Alice',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('ignores typing from a socket not in the room', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-nonmember');
+
+      let aliceReceived = false;
+      alice.on('TYPING', () => { aliceReceived = true; });
+      intruder.emit('TYPING', {
+        roomId: 'room-typing-nonmember',
+        senderName: 'Intruder',
+      });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(aliceReceived).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+
+    it('uses "Someone" as senderName when none is provided', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-typing-noname');
+      await joinRoom(bob, 'room-typing-noname');
+
+      const bobReceived = once(bob, 'TYPING');
+      alice.emit('TYPING', { roomId: 'room-typing-noname' });
+
+      const payload = await bobReceived;
+      expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
     });
   });
 });

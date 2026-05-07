@@ -23,32 +23,33 @@ class YouTubeSearchRepositoryImpl
                     val encodedQuery = URLEncoder.encode(query, "UTF-8")
                     val url = "${BuildConfig.SERVER_URL}/api/youtube/search?q=$encodedQuery"
                     val request = Request.Builder().url(url).get().build()
-                    val response = okHttpClient.newCall(request).execute()
-                    if (!response.isSuccessful) {
-                        return@withContext Result.failure(
-                            Exception("Search request failed with status ${response.code}"),
-                        )
-                    }
-                    val body =
-                        response.body?.string()
-                            ?: return@withContext Result.failure(Exception("Empty response body"))
-                    val json = JSONObject(body)
-                    val itemsArray = json.getJSONArray("items")
-                    val results =
-                        buildList {
-                            for (i in 0 until itemsArray.length()) {
-                                val item = itemsArray.getJSONObject(i)
-                                add(
-                                    YouTubeSearchResult(
-                                        videoId = item.getString("videoId"),
-                                        title = item.getString("title"),
-                                        channelTitle = item.getString("channelTitle"),
-                                        thumbnailUrl = item.getString("thumbnailUrl"),
-                                    ),
-                                )
-                            }
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            return@withContext Result.failure(
+                                Exception("Search request failed with status ${response.code}"),
+                            )
                         }
-                    Result.success(results)
+                        val body =
+                            response.body?.string()
+                                ?: return@withContext Result.failure(Exception("Empty response body"))
+                        val json = JSONObject(body)
+                        val itemsArray = json.getJSONArray("items")
+                        val results =
+                            buildList {
+                                for (i in 0 until itemsArray.length()) {
+                                    val item = itemsArray.getJSONObject(i)
+                                    add(
+                                        YouTubeSearchResult(
+                                            videoId = item.getString("videoId"),
+                                            title = item.getString("title"),
+                                            channelTitle = item.getString("channelTitle"),
+                                            thumbnailUrl = item.getString("thumbnailUrl"),
+                                        ),
+                                    )
+                                }
+                            }
+                        Result.success(results)
+                    }
                 } catch (e: Exception) {
                     Result.failure(e)
                 }

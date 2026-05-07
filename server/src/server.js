@@ -51,6 +51,7 @@ function createApp(options = {}) {
   // Configuration (env vars):
   //   YOUTUBE_API_KEY   YouTube Data API v3 key (required for this route to work).
   //                     When unset the route responds 503.
+  //   YOUTUBE_SEARCH_TIMEOUT_MS  Fetch timeout in ms (default: 8000).
   app.get('/api/youtube/search', async (req, res) => {
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
@@ -62,6 +63,13 @@ function createApp(options = {}) {
       res.status(400).json({ error: 'Missing search query' });
       return;
     }
+    if (q.length > 200) {
+      res.status(400).json({ error: 'Search query too long' });
+      return;
+    }
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
@@ -69,7 +77,7 @@ function createApp(options = {}) {
       url.searchParams.set('q', q);
       url.searchParams.set('maxResults', '10');
       url.searchParams.set('key', apiKey);
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
         res.status(502).json({ error: 'YouTube API error' });
         return;
@@ -86,8 +94,14 @@ function createApp(options = {}) {
       }));
       res.json({ items });
     } catch (err) {
-      console.error('[youtube-search] error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      if (err.name === 'AbortError') {
+        res.status(504).json({ error: 'YouTube API request timed out' });
+      } else {
+        console.error('[youtube-search] error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    } finally {
+      clearTimeout(timer);
     }
   });
 
@@ -183,6 +197,26 @@ function createApp(options = {}) {
     },
   });
 
+  // ── Room status endpoint ──────────────────────────────────────────────────
+  // Returns whether a room is currently active (has connected listeners) and
+  // how many listeners are present.  Used by the Android client to show
+  // "active / N listeners" next to entries in the Recent Rooms list.
+  app.get('/room/:roomId/status', async (req, res) => {
+    const { roomId } = req.params;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(roomId)) {
+      res.status(400).json({ error: 'invalid roomId' });
+      return;
+    }
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      const listenerCount = sockets.length;
+      res.json({ active: listenerCount > 0, listenerCount });
+    } catch (err) {
+      console.error(`[status] fetchSockets failed  room=${roomId}:`, err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
   /**
    * Returns `pos` when it is a finite, non-negative number; otherwise `null`.
    * @param {unknown} pos
@@ -260,6 +294,16 @@ function createApp(options = {}) {
     }
   }
 
+  /**
+   * Returns a non-empty display name from `raw`, falling back to `'Someone'`
+   * when the value is absent or blank.
+   * @param {unknown} raw
+   * @returns {string}
+   */
+  function sanitiseSenderName(raw) {
+    return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
+  }
+
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[socket] connected  id=${socket.id}`);
@@ -275,8 +319,11 @@ function createApp(options = {}) {
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
       if (typeof ack === 'function') {
         try {
-          const roomData = await roomStore.getRoom(roomId);
-          ack({ ok: true, state: roomData ?? null });
+          const [roomData, sockets] = await Promise.all([
+            roomStore.getRoom(roomId),
+            io.in(roomId).fetchSockets(),
+          ]);
+          ack({ ok: true, state: roomData ?? null, memberCount: sockets.length });
         } catch (err) {
           console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
           ack({ error: 'failed to load room state' });
@@ -431,6 +478,46 @@ function createApp(options = {}) {
       } catch (err) {
         console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
       }
+    });
+
+    // ── CHAT_MESSAGE ───────────────────────────────────────────────────────
+    // Relays a text message from one room member to all other members.
+    // Expected payload: { roomId: string, text: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('CHAT_MESSAGE', (payload) => {
+      const { roomId, text, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof text !== 'string' || text.trim() === '') return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('CHAT_MESSAGE', {
+        senderId: socket.id,
+        senderName: name,
+        text: text.trim(),
+      });
+    });
+
+    // ── REACTION ───────────────────────────────────────────────────────────
+    // Relays an ephemeral emoji reaction to all other members of the room.
+    // Expected payload: { roomId: string, emoji: string }
+    socket.on('REACTION', (payload) => {
+      const { roomId, emoji } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof emoji !== 'string' || emoji.trim() === '') return;
+      socket.to(roomId).emit('REACTION', { emoji: emoji.trim() });
+    });
+
+    // ── TYPING ─────────────────────────────────────────────────────────────
+    // Notifies other room members that a participant is composing a message.
+    // Expected payload: { roomId: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('TYPING', (payload) => {
+      const { roomId, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('TYPING', { senderId: socket.id, senderName: name });
     });
 
     // ── disconnecting ──────────────────────────────────────────────────────
