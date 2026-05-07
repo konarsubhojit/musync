@@ -5,12 +5,12 @@ import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.sync.SocketEvents
+import io.socket.client.Ack
 import io.socket.client.Socket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +18,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -52,6 +55,9 @@ class SessionRepositoryImpl
              * removed from [_typingUsers].
              */
             internal const val TYPING_TIMEOUT_MS = 3_000L
+
+            /** Maximum number of chat messages retained in memory per session. */
+            private const val MAX_CHAT_MESSAGES = 200
         }
 
         /**
@@ -74,6 +80,12 @@ class SessionRepositoryImpl
         private val playNextEmitted = AtomicBoolean(false)
 
         /**
+         * Mutex protecting [typingJobs] against concurrent access from Socket.IO
+         * callback threads and the repository's coroutine scope.
+         */
+        private val typingJobsMutex = Mutex()
+
+        /**
          * Tracks pending "stop-typing" cleanup coroutines keyed by senderId so that
          * each new TYPING event from the same user resets the timeout.
          */
@@ -84,9 +96,16 @@ class SessionRepositoryImpl
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
             }
+            socket.on(SocketEvents.PEER_JOINED) {
+                _events.tryEmit(SyncEvent.PeerJoined)
+            }
+            socket.on(SocketEvents.PEER_LEFT) {
+                _events.tryEmit(SyncEvent.PeerLeft)
+            }
 
             socket.on(SocketEvents.CHAT_MESSAGE) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
+                // The server sets senderId to socket.id, so it is the authoritative sender ID.
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 val senderName = obj.optString("senderName").ifBlank { "Someone" }
                 val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return@on
@@ -110,9 +129,10 @@ class SessionRepositoryImpl
 
             socket.on(SocketEvents.TYPING) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
+                // The server sets senderId to socket.id, so it is the authoritative sender ID.
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 // Add the typing user and schedule auto-removal after the timeout.
-                _typingUsers.value = _typingUsers.value + senderId
+                _typingUsers.update { it + senderId }
                 scheduleTypingTimeout(senderId)
             }
         }
@@ -139,7 +159,15 @@ class SessionRepositoryImpl
             playNextEmitted.set(false)
             _session.value = session
             socket.connect()
-            socket.emit(SocketEvents.JOIN_ROOM, session.sessionId)
+            socket.emit(
+                SocketEvents.JOIN_ROOM,
+                session.sessionId,
+                Ack { args ->
+                    val data = (args.getOrNull(0) as? JSONObject)
+                    val memberCount = data?.optInt("memberCount", 1) ?: 1
+                    _events.tryEmit(SyncEvent.MembersSnapshot(memberCount))
+                },
+            )
         }
 
         override fun leaveSession() {
@@ -182,7 +210,6 @@ class SessionRepositoryImpl
                 JSONObject()
                     .put("roomId", session.sessionId)
                     .put("text", trimmedText)
-                    .put("senderId", session.localUserId)
                     .put("senderName", trimmedName),
             )
         }
@@ -205,7 +232,6 @@ class SessionRepositoryImpl
                 SocketEvents.TYPING,
                 JSONObject()
                     .put("roomId", session.sessionId)
-                    .put("senderId", session.localUserId)
                     .put("senderName", trimmedName),
             )
         }
@@ -234,21 +260,31 @@ class SessionRepositoryImpl
         /**
          * Resets (or starts) the inactivity coroutine that removes [senderId] from
          * [_typingUsers] after [TYPING_TIMEOUT_MS] ms of silence.
+         *
+         * Access to [typingJobs] is serialised by [typingJobsMutex] to prevent
+         * concurrent-modification issues between Socket.IO callback threads and
+         * the coroutine scope.
          */
         private fun scheduleTypingTimeout(senderId: String) {
-            typingJobs[senderId]?.cancel()
-            typingJobs[senderId] =
-                repositoryScope.launch {
-                    delay(TYPING_TIMEOUT_MS)
-                    _typingUsers.value = _typingUsers.value - senderId
-                    typingJobs.remove(senderId)
+            repositoryScope.launch {
+                typingJobsMutex.withLock {
+                    typingJobs[senderId]?.cancel()
+                    typingJobs[senderId] =
+                        repositoryScope.launch {
+                            delay(TYPING_TIMEOUT_MS)
+                            _typingUsers.update { it - senderId }
+                            typingJobsMutex.withLock { typingJobs.remove(senderId) }
+                        }
                 }
+            }
         }
 
         private fun cancelAllTypingJobs() {
-            typingJobs.values.forEach { it.cancel() }
-            typingJobs.clear()
+            repositoryScope.launch {
+                typingJobsMutex.withLock {
+                    typingJobs.values.forEach { it.cancel() }
+                    typingJobs.clear()
+                }
+            }
         }
     }
-
-

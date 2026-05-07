@@ -1,6 +1,8 @@
 package com.musync.sync
 
+import com.musync.data.model.Track
 import io.socket.client.Socket
+import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,6 +83,34 @@ class SyncEmitter
                     .put("roomId", roomId)
                     .put("hostPositionMs", positionMs)
                     .put("hostTimestamp", clock.currentTimeMs()),
+            )
+        }
+
+        /**
+         * Emits a [SocketEvents.QUEUE_UPDATED] event so all room members see the
+         * latest queue state.  The full track data is included so peers can load
+         * tracks by their YouTube video ID.
+         */
+        fun emitQueueUpdated(
+            roomId: String,
+            queue: List<Track>,
+        ) {
+            val arr = JSONArray()
+            queue.forEach { track ->
+                arr.put(
+                    JSONObject()
+                        .put("id", track.id)
+                        .put("title", track.title)
+                        .put("artist", track.artist)
+                        .put("youtubeVideoId", track.youtubeVideoId)
+                        .put("durationMs", track.durationMs),
+                )
+            }
+            socket.emit(
+                SocketEvents.QUEUE_UPDATED,
+                JSONObject()
+                    .put("roomId", roomId)
+                    .put("queue", arr),
             )
         }
     }

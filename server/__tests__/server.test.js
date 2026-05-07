@@ -129,6 +129,19 @@ describe('MuSync server', () => {
       bob.disconnect();
     });
 
+    it('includes memberCount in join ack', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      const aliceAck = await joinRoom(alice, 'room-membercount');
+      expect(aliceAck.memberCount).toBe(1);
+
+      const bobAck = await joinRoom(bob, 'room-membercount');
+      expect(bobAck.memberCount).toBe(2);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
     it('ignores join_room with an empty roomId', async () => {
       const alice = await connect();
 
@@ -638,7 +651,7 @@ describe('MuSync server', () => {
 
   // ── CHAT_MESSAGE ──────────────────────────────────────────────────────────
   describe('CHAT_MESSAGE', () => {
-    it('relays a chat message to other room members', async () => {
+    it('relays a chat message to other room members with socket.id as senderId', async () => {
       const [alice, bob] = await Promise.all([connect(), connect()]);
       await joinRoom(alice, 'room-chat-1');
       await joinRoom(bob, 'room-chat-1');
@@ -647,13 +660,13 @@ describe('MuSync server', () => {
       alice.emit('CHAT_MESSAGE', {
         roomId: 'room-chat-1',
         text: 'Hello!',
-        senderId: 'alice-id',
         senderName: 'Alice',
       });
 
       const payload = await bobReceived;
+      // The server derives senderId from socket.id, not the client payload.
       expect(payload).toMatchObject({
-        senderId: 'alice-id',
+        senderId: alice.id,
         senderName: 'Alice',
         text: 'Hello!',
       });
@@ -672,7 +685,6 @@ describe('MuSync server', () => {
       alice.emit('CHAT_MESSAGE', {
         roomId: 'room-chat-noecho',
         text: 'Hi',
-        senderId: 'alice-id',
         senderName: 'Alice',
       });
 
@@ -693,7 +705,6 @@ describe('MuSync server', () => {
       alice.emit('CHAT_MESSAGE', {
         roomId: 'room-chat-blank',
         text: '   ',
-        senderId: 'alice-id',
         senderName: 'Alice',
       });
 
@@ -713,7 +724,6 @@ describe('MuSync server', () => {
       intruder.emit('CHAT_MESSAGE', {
         roomId: 'room-chat-nonmember',
         text: 'Sneaky',
-        senderId: 'intruder-id',
         senderName: 'Intruder',
       });
 
@@ -733,7 +743,6 @@ describe('MuSync server', () => {
       alice.emit('CHAT_MESSAGE', {
         roomId: 'room-chat-noname',
         text: 'Hello',
-        senderId: 'alice-id',
       });
 
       const payload = await bobReceived;
@@ -795,7 +804,7 @@ describe('MuSync server', () => {
 
   // ── TYPING ────────────────────────────────────────────────────────────────
   describe('TYPING', () => {
-    it('relays a typing indicator to other room members', async () => {
+    it('relays a typing indicator to other room members with socket.id as senderId', async () => {
       const [alice, bob] = await Promise.all([connect(), connect()]);
       await joinRoom(alice, 'room-typing-1');
       await joinRoom(bob, 'room-typing-1');
@@ -803,12 +812,12 @@ describe('MuSync server', () => {
       const bobReceived = once(bob, 'TYPING');
       alice.emit('TYPING', {
         roomId: 'room-typing-1',
-        senderId: 'alice-id',
         senderName: 'Alice',
       });
 
       const payload = await bobReceived;
-      expect(payload).toMatchObject({ senderId: 'alice-id', senderName: 'Alice' });
+      // The server derives senderId from socket.id, not the client payload.
+      expect(payload).toMatchObject({ senderId: alice.id, senderName: 'Alice' });
 
       alice.disconnect();
       bob.disconnect();
@@ -823,7 +832,6 @@ describe('MuSync server', () => {
       alice.on('TYPING', () => { aliceReceived = true; });
       alice.emit('TYPING', {
         roomId: 'room-typing-noecho',
-        senderId: 'alice-id',
         senderName: 'Alice',
       });
 
@@ -842,7 +850,6 @@ describe('MuSync server', () => {
       alice.on('TYPING', () => { aliceReceived = true; });
       intruder.emit('TYPING', {
         roomId: 'room-typing-nonmember',
-        senderId: 'intruder-id',
         senderName: 'Intruder',
       });
 
@@ -859,7 +866,7 @@ describe('MuSync server', () => {
       await joinRoom(bob, 'room-typing-noname');
 
       const bobReceived = once(bob, 'TYPING');
-      alice.emit('TYPING', { roomId: 'room-typing-noname', senderId: 'alice-id' });
+      alice.emit('TYPING', { roomId: 'room-typing-noname' });
 
       const payload = await bobReceived;
       expect(payload.senderName).toBe('Someone');

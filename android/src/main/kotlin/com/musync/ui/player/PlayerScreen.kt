@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -21,6 +22,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,12 +31,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -74,6 +81,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -99,6 +108,22 @@ fun PlayerScreen(
         if (uiState.inviteLinkCopied) {
             snackbarHostState.currentSnackbarData?.dismiss()
             snackbarHostState.showSnackbar(inviteLinkCopiedMessage)
+        }
+    }
+
+    val peerJoinedMessage = stringResource(R.string.player_peer_joined)
+    val peerLeftMessage = stringResource(R.string.player_peer_left)
+    LaunchedEffect(uiState.presenceEvent) {
+        when (uiState.presenceEvent) {
+            PresenceEvent.PeerJoined -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerJoinedMessage)
+            }
+            PresenceEvent.PeerLeft -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerLeftMessage)
+            }
+            null -> { /* nothing to show */ }
         }
     }
 
@@ -186,6 +211,9 @@ fun PlayerScreen(
                             isPlaying = state == PlayerConstants.PlayerState.PLAYING,
                             isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
                         )
+                        if (state == PlayerConstants.PlayerState.ENDED) {
+                            viewModel.onTrackEnded()
+                        }
                     },
                     onCurrentSecond = viewModel::onCurrentSecond,
                     onDuration = viewModel::onDurationReceived,
@@ -213,6 +241,7 @@ fun PlayerScreen(
                     playerReady = youTubePlayer != null,
                     currentSecond = uiState.currentSecond,
                     duration = uiState.duration,
+                    canSkip = uiState.isHost && uiState.queue.isNotEmpty(),
                     onPlayPause = {
                         val player = youTubePlayer ?: return@AnimatedOverlayControls
                         viewModel.onControlsInteraction()
@@ -222,6 +251,10 @@ fun PlayerScreen(
                         viewModel.onControlsInteraction()
                         viewModel.onUserSeeked((second * 1000).toLong())
                         youTubePlayer?.seekTo(second)
+                    },
+                    onSkipNext = {
+                        viewModel.onControlsInteraction()
+                        viewModel.onSkipToNext()
                     },
                 )
             }
@@ -266,7 +299,13 @@ fun PlayerScreen(
                             onChatMessageSend = viewModel::onChatMessageSend,
                             onReactionSent = viewModel::onReactionSent,
                         )
-                    PlayerTab.Queue -> QueueTab(queue = uiState.queue)
+                    PlayerTab.Queue ->
+                        QueueTab(
+                            queue = uiState.queue,
+                            isHost = uiState.isHost,
+                            onRemoveTrack = viewModel::onRemoveFromQueue,
+                            onMoveItem = viewModel::onMoveQueueItem,
+                        )
                 }
             }
         }
@@ -406,8 +445,10 @@ private fun AnimatedOverlayControls(
     playerReady: Boolean,
     currentSecond: Float,
     duration: Float,
+    canSkip: Boolean,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
+    onSkipNext: () -> Unit,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -420,8 +461,10 @@ private fun AnimatedOverlayControls(
             playerReady = playerReady,
             currentSecond = currentSecond,
             duration = duration,
+            canSkip = canSkip,
             onPlayPause = onPlayPause,
             onSeek = onSeek,
+            onSkipNext = onSkipNext,
         )
     }
 }
@@ -433,14 +476,17 @@ private fun PlayerOverlayControls(
     playerReady: Boolean,
     currentSecond: Float,
     duration: Float,
+    canSkip: Boolean,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
+    onSkipNext: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
         // Centred play/pause (or loading) button — YouTube-style.
-        Box(
+        Row(
             modifier = Modifier.align(Alignment.Center),
-            contentAlignment = Alignment.Center,
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!playerReady || isBuffering) {
                 CircularProgressIndicator(
@@ -463,6 +509,24 @@ private fun PlayerOverlayControls(
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )
+                }
+                if (canSkip) {
+                    Spacer(Modifier.size(16.dp))
+                    IconButton(
+                        onClick = onSkipNext,
+                        modifier =
+                            Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f)),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.SkipNext,
+                            contentDescription = stringResource(R.string.player_skip_next),
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
             }
         }
@@ -598,8 +662,15 @@ private fun RoomTab(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.size(40.dp),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier.semantics {
+                                contentDescription = "Send reaction $emoji"
+                            },
+                    ) {
                         Text(text = emoji, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
@@ -617,7 +688,7 @@ private fun RoomTab(
                     .weight(1f)
                     .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             if (chatMessages.isEmpty()) {
                 item {
@@ -664,11 +735,11 @@ private fun RoomTab(
                 placeholder = { Text(stringResource(R.string.chat_input_hint)) },
                 singleLine = true,
                 keyboardOptions =
-                    androidx.compose.foundation.text.KeyboardOptions(
+                    KeyboardOptions(
                         imeAction = ImeAction.Send,
                     ),
                 keyboardActions =
-                    androidx.compose.foundation.text.KeyboardActions(
+                    KeyboardActions(
                         onSend = { onChatMessageSend() },
                     ),
                 modifier = Modifier.weight(1f),
@@ -742,7 +813,49 @@ private fun ChatMessageRow(message: ChatMessage) {
 }
 
 @Composable
-private fun QueueTab(queue: List<Track>) {
+private fun ParticipantRow(
+    initial: String,
+    name: String,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initial,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueTab(
+    queue: List<Track>,
+    isHost: Boolean,
+    onRemoveTrack: (String) -> Unit,
+    onMoveItem: (Int, Int) -> Unit,
+) {
     if (queue.isEmpty()) {
         Box(
             modifier =
@@ -760,25 +873,42 @@ private fun QueueTab(queue: List<Track>) {
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(items = queue, key = { it.id }) { track ->
-                QueueRow(track = track)
+                val index = queue.indexOf(track)
+                QueueRow(
+                    track = track,
+                    isHost = isHost,
+                    canMoveUp = isHost && index > 0,
+                    canMoveDown = isHost && index < queue.lastIndex,
+                    onMoveUp = { onMoveItem(index, index - 1) },
+                    onMoveDown = { onMoveItem(index, index + 1) },
+                    onRemove = { onRemoveTrack(track.id) },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun QueueRow(track: Track) {
+private fun QueueRow(
+    track: Track,
+    isHost: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -803,12 +933,64 @@ private fun QueueRow(track: Track) {
                     maxLines = 1,
                 )
             }
-            // Drag handle reserved for future reordering.
-            Icon(
-                imageVector = Icons.Filled.DragHandle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (isHost) {
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = canMoveUp,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = stringResource(R.string.player_move_up),
+                        tint =
+                            if (canMoveUp) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.3f,
+                                )
+                            },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = canMoveDown,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.player_move_down),
+                        tint =
+                            if (canMoveDown) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.3f,
+                                )
+                            },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = stringResource(R.string.player_remove_from_queue),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            } else {
+                // Guests see a visual drag handle but cannot modify the queue.
+                Icon(
+                    imageVector = Icons.Filled.DragHandle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

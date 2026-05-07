@@ -237,8 +237,11 @@ function createApp(options = {}) {
       socket.to(roomId).emit('peer_joined', { socketId: socket.id });
       if (typeof ack === 'function') {
         try {
-          const roomData = await roomStore.getRoom(roomId);
-          ack({ ok: true, state: roomData ?? null });
+          const [roomData, sockets] = await Promise.all([
+            roomStore.getRoom(roomId),
+            io.in(roomId).fetchSockets(),
+          ]);
+          ack({ ok: true, state: roomData ?? null, memberCount: sockets.length });
         } catch (err) {
           console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
           ack({ error: 'failed to load room state' });
@@ -397,16 +400,16 @@ function createApp(options = {}) {
 
     // ── CHAT_MESSAGE ───────────────────────────────────────────────────────
     // Relays a text message from one room member to all other members.
-    // Expected payload: { roomId: string, text: string, senderId: string, senderName: string }
+    // Expected payload: { roomId: string, text: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
     socket.on('CHAT_MESSAGE', (payload) => {
-      const { roomId, text, senderId, senderName } = payload ?? {};
+      const { roomId, text, senderName } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
       if (typeof text !== 'string' || text.trim() === '') return;
-      if (typeof senderId !== 'string' || senderId.trim() === '') return;
       const name = sanitiseSenderName(senderName);
       socket.to(roomId).emit('CHAT_MESSAGE', {
-        senderId: senderId.trim(),
+        senderId: socket.id,
         senderName: name,
         text: text.trim(),
       });
@@ -425,14 +428,14 @@ function createApp(options = {}) {
 
     // ── TYPING ─────────────────────────────────────────────────────────────
     // Notifies other room members that a participant is composing a message.
-    // Expected payload: { roomId: string, senderId: string, senderName: string }
+    // Expected payload: { roomId: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
     socket.on('TYPING', (payload) => {
-      const { roomId, senderId, senderName } = payload ?? {};
+      const { roomId, senderName } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
       if (!socket.rooms.has(roomId)) return;
-      if (typeof senderId !== 'string' || senderId.trim() === '') return;
       const name = sanitiseSenderName(senderName);
-      socket.to(roomId).emit('TYPING', { senderId: senderId.trim(), senderName: name });
+      socket.to(roomId).emit('TYPING', { senderId: socket.id, senderName: name });
     });
 
     // ── disconnecting ──────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.BuildConfig
+import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
@@ -55,6 +56,9 @@ class PlayerViewModel
             /** Duration (ms) to show the "link copied" feedback in the UI. */
             internal const val INVITE_COPIED_FEEDBACK_DURATION_MS = 2_000L
 
+            /** Duration (ms) to show a peer-presence (join/leave) notification. */
+            internal const val PRESENCE_EVENT_DURATION_MS = 3_000L
+
             /** Duration (ms) before the playback overlay controls auto-hide after a tap. */
             internal const val CONTROLS_AUTO_HIDE_MS = 3_000L
 
@@ -78,6 +82,13 @@ class PlayerViewModel
              * Can later be replaced with a user-configurable name from settings.
              */
             internal const val DEFAULT_DISPLAY_NAME = "You"
+
+            /**
+             * Maximum number of chat messages retained in [PlayerUiState.chatMessages].
+             * When the list exceeds this size, the oldest messages are dropped so that
+             * long sessions do not grow memory usage or recomposition cost unboundedly.
+             */
+            internal const val MAX_CHAT_MESSAGES = 200
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -94,6 +105,9 @@ class PlayerViewModel
 
         /** Debounce job for TYPING socket event emission. */
         private var typingDebounceJob: Job? = null
+
+        /** Tracks the active job that clears [PlayerUiState.presenceEvent] after a delay. */
+        private var presenceResetJob: Job? = null
 
         /**
          * `true` only when the local player was most recently in a PLAYING state.
@@ -184,8 +198,21 @@ class PlayerViewModel
             // React to session-level events (e.g. ROOM_CLOSED broadcast by the host).
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
-                    if (event is SyncEvent.RoomClosed) {
-                        _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                    when (event) {
+                        is SyncEvent.RoomClosed ->
+                            _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        is SyncEvent.PlayNext -> loadNextTrack()
+                        is SyncEvent.MembersSnapshot ->
+                            _uiState.update { it.copy(participantCount = event.count) }
+                        is SyncEvent.PeerJoined -> {
+                            val newCount = _uiState.value.participantCount + 1
+                            showPresenceEvent(PresenceEvent.PeerJoined, newCount)
+                        }
+                        is SyncEvent.PeerLeft -> {
+                            val newCount = (_uiState.value.participantCount - 1).coerceAtLeast(1)
+                            showPresenceEvent(PresenceEvent.PeerLeft, newCount)
+                        }
+                        else -> Unit
                     }
                 }
             }
@@ -193,7 +220,10 @@ class PlayerViewModel
             // Collect incoming chat messages.
             viewModelScope.launch {
                 sessionRepository.chatMessages.collect { message ->
-                    _uiState.update { it.copy(chatMessages = it.chatMessages + message) }
+                    _uiState.update { state ->
+                        val updated = (state.chatMessages + message).takeLast(MAX_CHAT_MESSAGES)
+                        state.copy(chatMessages = updated)
+                    }
                 }
             }
 
@@ -422,6 +452,23 @@ class PlayerViewModel
             heartbeatJob = null
         }
 
+        /**
+         * Updates the participant count and surfaces a transient [PresenceEvent] notification.
+         * Cancels any pending reset job so that back-to-back events each get a fresh timer.
+         */
+        private fun showPresenceEvent(
+            event: PresenceEvent,
+            newCount: Int,
+        ) {
+            presenceResetJob?.cancel()
+            _uiState.update { it.copy(participantCount = newCount, presenceEvent = event) }
+            presenceResetJob =
+                viewModelScope.launch {
+                    delay(PRESENCE_EVENT_DURATION_MS)
+                    _uiState.update { it.copy(presenceEvent = null) }
+                }
+        }
+
         private fun scheduleControlsHide() {
             controlsAutoHideJob?.cancel()
             controlsAutoHideJob =
@@ -521,5 +568,65 @@ class PlayerViewModel
          */
         fun onNavigatedBack() {
             _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
+        }
+
+        /**
+         * Called when the YouTube player signals that the current track has ended.
+         * Notifies [SessionRepository] so it can emit [SyncEvent.PlayNext] when the local
+         * user is the session host.  Auto-advance is then handled in the events collector.
+         */
+        fun onTrackEnded() {
+            sessionRepository.onPlayerStateChanged(PlayerState.ENDED)
+        }
+
+        /**
+         * Removes the track identified by [trackId] from the local queue and broadcasts the
+         * updated queue to the room via [SyncEmitter].  No-op for guest clients.
+         */
+        fun onRemoveFromQueue(trackId: String) {
+            if (!isHost) return
+            val updatedQueue = _uiState.value.queue.filter { it.id != trackId }
+            musicRepository.updateQueue(updatedQueue)
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
+        }
+
+        /**
+         * Moves the queue item at [fromIndex] to [toIndex] and broadcasts the updated queue.
+         * No-op for guest clients or when either index is out of bounds.
+         */
+        fun onMoveQueueItem(
+            fromIndex: Int,
+            toIndex: Int,
+        ) {
+            if (!isHost) return
+            val current = _uiState.value.queue.toMutableList()
+            if (fromIndex < 0 || fromIndex >= current.size || toIndex < 0 || toIndex >= current.size) return
+            val item = current.removeAt(fromIndex)
+            current.add(toIndex, item)
+            musicRepository.updateQueue(current)
+            syncEmitter.emitQueueUpdated(roomId, current)
+        }
+
+        /**
+         * Skips the currently playing track and loads the first track from the queue.
+         * No-op for guest clients or when the queue is empty.
+         */
+        fun onSkipToNext() {
+            if (!isHost) return
+            loadNextTrack()
+        }
+
+        /**
+         * Loads and plays the first track in the queue, removes it from the queue, and
+         * broadcasts the updated queue to the room.  No-op when the queue is empty.
+         */
+        private fun loadNextTrack() {
+            val queue = _uiState.value.queue
+            if (queue.isEmpty()) return
+            val nextTrack = queue[0]
+            val updatedQueue = queue.drop(1)
+            musicRepository.updateQueue(updatedQueue)
+            _uiState.update { it.copy(videoId = nextTrack.youtubeVideoId) }
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
         }
     }
