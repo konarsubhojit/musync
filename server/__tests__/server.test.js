@@ -129,6 +129,19 @@ describe('MuSync server', () => {
       bob.disconnect();
     });
 
+    it('includes memberCount in join ack', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      const aliceAck = await joinRoom(alice, 'room-membercount');
+      expect(aliceAck.memberCount).toBe(1);
+
+      const bobAck = await joinRoom(bob, 'room-membercount');
+      expect(bobAck.memberCount).toBe(2);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
     it('ignores join_room with an empty roomId', async () => {
       const alice = await connect();
 
