@@ -699,8 +699,14 @@ class PlayerViewModelTest {
     private class FakeSessionRepository : SessionRepository {
         private val _session = MutableStateFlow<Session?>(null)
         private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 8)
+        private val _chatMessages = MutableSharedFlow<com.musync.data.model.ChatMessage>(extraBufferCapacity = 64)
+        private val _reactions = MutableSharedFlow<String>(extraBufferCapacity = 64)
+        private val _typingUsers = MutableStateFlow<Set<String>>(emptySet())
         override val session: StateFlow<Session?> = _session
         override val events: SharedFlow<SyncEvent> = _events
+        override val chatMessages: SharedFlow<com.musync.data.model.ChatMessage> = _chatMessages
+        override val reactions: SharedFlow<String> = _reactions
+        override val typingUsers: StateFlow<Set<String>> = _typingUsers
 
         var endSessionCalled = false
 
@@ -717,6 +723,12 @@ class PlayerViewModelTest {
         override fun endSession() {
             endSessionCalled = true
         }
+
+        override fun sendChatMessage(text: String, senderName: String) = Unit
+
+        override fun sendReaction(emoji: String) = Unit
+
+        override fun sendTyping(senderName: String) = Unit
 
         fun emitRoomClosed() {
             _events.tryEmit(SyncEvent.RoomClosed)

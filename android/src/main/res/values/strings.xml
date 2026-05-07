@@ -59,6 +59,12 @@
     <string name="player_leave_dialog_end_for_all">End for Everyone</string>
     <string name="player_room_closed_by_host">Room was closed by the host</string>
 
+    <!-- Chat -->
+    <string name="chat_empty_hint">No messages yet. Say something!</string>
+    <string name="chat_input_hint">Message…</string>
+    <string name="chat_send_button">Send</string>
+    <string name="chat_typing_indicator">Someone is typing…</string>
+
     <!-- Settings screen -->
     <string name="settings_title">Settings</string>
     <string name="settings_back">Back</string>

@@ -212,6 +212,16 @@ function createApp(options = {}) {
     }
   }
 
+  /**
+   * Returns a non-empty display name from `raw`, falling back to `'Someone'`
+   * when the value is absent or blank.
+   * @param {unknown} raw
+   * @returns {string}
+   */
+  function sanitiseSenderName(raw) {
+    return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
+  }
+
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[socket] connected  id=${socket.id}`);
@@ -386,6 +396,46 @@ function createApp(options = {}) {
       } catch (err) {
         console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
       }
+    });
+
+    // ── CHAT_MESSAGE ───────────────────────────────────────────────────────
+    // Relays a text message from one room member to all other members.
+    // Expected payload: { roomId: string, text: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('CHAT_MESSAGE', (payload) => {
+      const { roomId, text, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof text !== 'string' || text.trim() === '') return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('CHAT_MESSAGE', {
+        senderId: socket.id,
+        senderName: name,
+        text: text.trim(),
+      });
+    });
+
+    // ── REACTION ───────────────────────────────────────────────────────────
+    // Relays an ephemeral emoji reaction to all other members of the room.
+    // Expected payload: { roomId: string, emoji: string }
+    socket.on('REACTION', (payload) => {
+      const { roomId, emoji } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof emoji !== 'string' || emoji.trim() === '') return;
+      socket.to(roomId).emit('REACTION', { emoji: emoji.trim() });
+    });
+
+    // ── TYPING ─────────────────────────────────────────────────────────────
+    // Notifies other room members that a participant is composing a message.
+    // Expected payload: { roomId: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('TYPING', (payload) => {
+      const { roomId, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('TYPING', { senderId: socket.id, senderName: name });
     });
 
     // ── disconnecting ──────────────────────────────────────────────────────

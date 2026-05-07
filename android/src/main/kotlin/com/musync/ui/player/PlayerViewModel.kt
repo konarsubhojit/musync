@@ -70,6 +70,25 @@ class PlayerViewModel
 
             /** SavedStateHandle key for the room ID provided via deep link. */
             internal const val ARG_ROOM_ID = "roomId"
+
+            /**
+             * Debounce window (ms) between input changes and sending a TYPING event.
+             * Reduces the number of TYPING socket emissions while the user is typing.
+             */
+            internal const val TYPING_DEBOUNCE_MS = 500L
+
+            /**
+             * Display name used when sending chat messages and typing indicators.
+             * Can later be replaced with a user-configurable name from settings.
+             */
+            internal const val DEFAULT_DISPLAY_NAME = "You"
+
+            /**
+             * Maximum number of chat messages retained in [PlayerUiState.chatMessages].
+             * When the list exceeds this size, the oldest messages are dropped so that
+             * long sessions do not grow memory usage or recomposition cost unboundedly.
+             */
+            internal const val MAX_CHAT_MESSAGES = 200
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -83,6 +102,9 @@ class PlayerViewModel
 
         /** Tracks the active periodic heartbeat emission job. */
         private var heartbeatJob: Job? = null
+
+        /** Debounce job for TYPING socket event emission. */
+        private var typingDebounceJob: Job? = null
 
         /** Tracks the active job that clears [PlayerUiState.presenceEvent] after a delay. */
         private var presenceResetJob: Job? = null
@@ -192,6 +214,30 @@ class PlayerViewModel
                         }
                         else -> Unit
                     }
+                }
+            }
+
+            // Collect incoming chat messages.
+            viewModelScope.launch {
+                sessionRepository.chatMessages.collect { message ->
+                    _uiState.update { state ->
+                        val updated = (state.chatMessages + message).takeLast(MAX_CHAT_MESSAGES)
+                        state.copy(chatMessages = updated)
+                    }
+                }
+            }
+
+            // Collect incoming emoji reactions.
+            viewModelScope.launch {
+                sessionRepository.reactions.collect { emoji ->
+                    _uiState.update { it.copy(pendingReactions = it.pendingReactions + emoji) }
+                }
+            }
+
+            // Mirror typing users from the repository into UI state.
+            viewModelScope.launch {
+                sessionRepository.typingUsers.collect { users ->
+                    _uiState.update { it.copy(typingUsers = users) }
                 }
             }
 
@@ -334,6 +380,60 @@ class PlayerViewModel
                 playbackSyncReceiver.attachPlayer(onPlay, onPause, onSeek)
             }
         }
+
+        // ------------------------------------------------------------------
+        // Chat
+        // ------------------------------------------------------------------
+
+        /** Updates the chat input field and emits a debounced TYPING event. */
+        fun onChatInputChanged(text: String) {
+            _uiState.update { it.copy(chatInput = text) }
+            if (text.isNotBlank()) {
+                typingDebounceJob?.cancel()
+                typingDebounceJob =
+                    viewModelScope.launch {
+                        delay(TYPING_DEBOUNCE_MS)
+                        sessionRepository.sendTyping(DEFAULT_DISPLAY_NAME)
+                    }
+            } else {
+                // Input cleared — cancel any pending TYPING event to avoid misleading indicators.
+                typingDebounceJob?.cancel()
+            }
+        }
+
+        /** Sends the current chat input as a message and clears the input field. */
+        fun onChatMessageSend() {
+            val text = _uiState.value.chatInput.trim()
+            if (text.isBlank()) return
+            typingDebounceJob?.cancel()
+            sessionRepository.sendChatMessage(text, DEFAULT_DISPLAY_NAME)
+            _uiState.update { it.copy(chatInput = "") }
+        }
+
+        /**
+         * Sends an ephemeral emoji reaction to all other room members.
+         * The emoji is also added locally to [PlayerUiState.pendingReactions] so
+         * the sender sees their own reaction immediately.
+         */
+        fun onReactionSent(emoji: String) {
+            sessionRepository.sendReaction(emoji)
+            _uiState.update { it.copy(pendingReactions = it.pendingReactions + emoji) }
+        }
+
+        /**
+         * Called by the UI once it has consumed (displayed) a pending reaction.
+         * Removes the first occurrence of [emoji] from [PlayerUiState.pendingReactions].
+         */
+        fun onReactionConsumed(emoji: String) {
+            _uiState.update { state ->
+                val updated = state.pendingReactions.toMutableList()
+                val idx = updated.indexOf(emoji)
+                if (idx >= 0) updated.removeAt(idx)
+                state.copy(pendingReactions = updated)
+            }
+        }
+
+        // ------------------------------------------------------------------
 
         private fun startHeartbeat() {
             heartbeatJob?.cancel()

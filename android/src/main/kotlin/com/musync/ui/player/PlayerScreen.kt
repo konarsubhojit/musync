@@ -18,12 +18,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -53,6 +58,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -74,10 +80,14 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.musync.R
+import com.musync.data.model.ChatMessage
 import com.musync.data.model.Track
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
@@ -274,7 +284,9 @@ fun PlayerScreen(
                     PlayerTab.Room ->
                         RoomTab(
                             inviteLink = uiState.inviteLink,
-                            participantCount = uiState.participantCount,
+                            chatMessages = uiState.chatMessages,
+                            chatInput = uiState.chatInput,
+                            typingUsers = uiState.typingUsers,
                             onCopyInvite = {
                                 clipboardManager.setText(AnnotatedString(uiState.inviteLink))
                                 viewModel.onInviteLinkCopied()
@@ -283,6 +295,9 @@ fun PlayerScreen(
                                 clipboardManager.setText(AnnotatedString(uiState.inviteLink))
                                 viewModel.onInviteLinkCopied()
                             },
+                            onChatInputChanged = viewModel::onChatInputChanged,
+                            onChatMessageSend = viewModel::onChatMessageSend,
+                            onReactionSent = viewModel::onReactionSent,
                         )
                     PlayerTab.Queue ->
                         QueueTab(
@@ -559,91 +574,239 @@ private fun PlayerOverlayControls(
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 
+/** Quick-reaction emojis shown in the Room tab. */
+private val REACTION_EMOJIS = listOf("🔥", "❤️", "😂", "👏", "😮")
+
 @Composable
 private fun RoomTab(
     inviteLink: String,
-    participantCount: Int,
+    chatMessages: List<ChatMessage>,
+    chatInput: String,
+    typingUsers: Set<String>,
     onCopyInvite: () -> Unit,
     onShareInvite: () -> Unit,
+    onChatInputChanged: (String) -> Unit,
+    onChatMessageSend: () -> Unit,
+    onReactionSent: (String) -> Unit,
 ) {
-    LazyColumn(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        // Invite card
+    val listState = rememberLazyListState()
+
+    // Scroll to the bottom when a new message arrives.
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) {
+            listState.animateScrollToItem(chatMessages.size - 1)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // ── Invite card ───────────────────────────────────────────────────
         if (inviteLink.isNotEmpty()) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = stringResource(R.string.player_invite_card_title),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = inviteLink,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = onCopyInvite) {
-                                Icon(
-                                    Icons.Filled.ContentCopy,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.size(6.dp))
-                                Text(stringResource(R.string.player_copy_link))
-                            }
-                            TextButton(onClick = onShareInvite) {
-                                Icon(
-                                    Icons.Filled.Share,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.size(6.dp))
-                                Text(stringResource(R.string.share_invite))
-                            }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.player_invite_card_title),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = inviteLink,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onCopyInvite) {
+                            Icon(
+                                Icons.Filled.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(stringResource(R.string.player_copy_link))
+                        }
+                        TextButton(onClick = onShareInvite) {
+                            Icon(
+                                Icons.Filled.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(stringResource(R.string.share_invite))
                         }
                     }
                 }
             }
         }
 
-        // Listeners section header
-        item {
+        // ── Reaction buttons ──────────────────────────────────────────────
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            REACTION_EMOJIS.forEach { emoji ->
+                Surface(
+                    onClick = { onReactionSent(emoji) },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.size(40.dp),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier.semantics {
+                                contentDescription = "Send reaction $emoji"
+                            },
+                    ) {
+                        Text(text = emoji, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+        // ── Chat messages ─────────────────────────────────────────────────
+        LazyColumn(
+            state = listState,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            if (chatMessages.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.chat_empty_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(items = chatMessages, key = { it.id }) { message ->
+                ChatMessageRow(message = message)
+            }
+        }
+
+        // ── Typing indicator ──────────────────────────────────────────────
+        if (typingUsers.isNotEmpty()) {
             Text(
-                text = stringResource(R.string.player_participants_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                text = stringResource(R.string.chat_typing_indicator),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
             )
         }
 
-        // Local user ("You") row
-        item {
-            ParticipantRow(
-                initial = stringResource(R.string.player_participant_you_initial),
-                name = stringResource(R.string.player_participant_you),
+        // ── Chat input ────────────────────────────────────────────────────
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = chatInput,
+                onValueChange = onChatInputChanged,
+                placeholder = { Text(stringResource(R.string.chat_input_hint)) },
+                singleLine = true,
+                keyboardOptions =
+                    KeyboardOptions(
+                        imeAction = ImeAction.Send,
+                    ),
+                keyboardActions =
+                    KeyboardActions(
+                        onSend = { onChatMessageSend() },
+                    ),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
             )
+            IconButton(
+                onClick = onChatMessageSend,
+                enabled = chatInput.isNotBlank(),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = stringResource(R.string.chat_send_button),
+                    tint =
+                        if (chatInput.isNotBlank()) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatMessageRow(message: ChatMessage) {
+    val alignment = if (message.isLocal) Alignment.End else Alignment.Start
+    val bubbleColor =
+        if (message.isLocal) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.surface
+        }
+    val textColor =
+        if (message.isLocal) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurface
         }
 
-        // One row per remote listener
-        items(count = (participantCount - 1).coerceAtLeast(0), key = { index -> "listener-$index" }) { index ->
-            ParticipantRow(
-                initial = stringResource(R.string.player_listener_initial),
-                name = stringResource(R.string.player_listener_name, index + 1),
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = alignment,
+    ) {
+        if (!message.isLocal) {
+            Text(
+                text = message.senderName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+            )
+        }
+        Surface(
+            color = bubbleColor,
+            shape = RoundedCornerShape(
+                topStart = if (message.isLocal) 16.dp else 4.dp,
+                topEnd = if (message.isLocal) 4.dp else 16.dp,
+                bottomStart = 16.dp,
+                bottomEnd = 16.dp,
+            ),
+            modifier = Modifier.widthIn(max = 280.dp),
+        ) {
+            Text(
+                text = message.text,
+                color = textColor,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
     }
