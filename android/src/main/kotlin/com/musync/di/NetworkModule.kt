@@ -9,6 +9,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.socket.client.IO
 import io.socket.client.Socket
+import okhttp3.OkHttpClient
 import javax.inject.Singleton
 
 @Module
@@ -21,4 +22,8 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideClock(): Clock = SystemClock
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(): OkHttpClient = OkHttpClient()
 }

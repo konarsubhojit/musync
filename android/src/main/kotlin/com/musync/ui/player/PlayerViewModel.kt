@@ -9,6 +9,7 @@ import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
@@ -34,6 +35,7 @@ class PlayerViewModel
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
         private val playbackSyncReceiver: PlaybackSyncReceiver,
+        private val recentRoomsRepository: RecentRoomsRepository,
     ) : ViewModel() {
         companion object {
             /**
@@ -168,6 +170,12 @@ class PlayerViewModel
                 )
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
+
+            // Record this room in the local history so the user can rejoin later.
+            recentRoomsRepository.addOrUpdateRoom(
+                roomId = roomId,
+                displayName = roomId,
+            )
 
             // Seed the videoId immediately when the host supplied one so the
             // YouTube player can start loading without waiting for the track

@@ -135,6 +135,26 @@ function createApp(options = {}) {
     },
   });
 
+  // ── Room status endpoint ──────────────────────────────────────────────────
+  // Returns whether a room is currently active (has connected listeners) and
+  // how many listeners are present.  Used by the Android client to show
+  // "active / N listeners" next to entries in the Recent Rooms list.
+  app.get('/room/:roomId/status', async (req, res) => {
+    const { roomId } = req.params;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(roomId)) {
+      res.status(400).json({ error: 'invalid roomId' });
+      return;
+    }
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      const listenerCount = sockets.length;
+      res.json({ active: listenerCount > 0, listenerCount });
+    } catch (err) {
+      console.error(`[status] fetchSockets failed  room=${roomId}:`, err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
   /**
    * Returns `pos` when it is a finite, non-negative number; otherwise `null`.
    * @param {unknown} pos

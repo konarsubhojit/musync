@@ -403,6 +403,47 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── GET /room/:roomId/status ──────────────────────────────────────────────
+  describe('GET /room/:roomId/status', () => {
+    it('returns active=false and listenerCount=0 for an empty room', async () => {
+      const res = await request(app).get('/room/status-empty/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: false, listenerCount: 0 });
+    });
+
+    it('returns active=true with correct listenerCount while members are connected', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-status-active');
+      await joinRoom(bob, 'room-status-active');
+
+      const res = await request(app).get('/room/room-status-active/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: true, listenerCount: 2 });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('returns active=false after all members leave', async () => {
+      const alice = await connect();
+      await joinRoom(alice, 'room-status-leave');
+      await leaveRoom(alice, 'room-status-leave');
+      // Allow time for the leave to propagate
+      await new Promise((r) => setTimeout(r, 50));
+
+      const res = await request(app).get('/room/room-status-leave/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ active: false, listenerCount: 0 });
+
+      alice.disconnect();
+    });
+
+    it('returns 400 for an invalid roomId', async () => {
+      const res = await request(app).get('/room/' + encodeURIComponent('<bad>') + '/status');
+      expect(res.status).toBe(400);
+    });
+  });
+
   // ── positionMs validation ─────────────────────────────────────────────────
   describe('positionMs validation', () => {
     it.each([
