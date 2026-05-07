@@ -51,8 +51,11 @@
     <string name="player_peer_left">A listener left the room</string>
     <string name="player_queue_empty">Queue is empty. Tap + to add a track.</string>
     <string name="player_add_to_queue">Add to queue</string>
-    <string name="player_add_queue_label">Add YouTube link</string>
+    <string name="player_add_queue_label">Search YouTube or paste a link</string>
     <string name="player_add_queue_confirm">Add</string>
+    <string name="player_search_youtube">Search YouTube</string>
+    <string name="player_search_results">Search results</string>
+    <string name="player_search_error">Search failed. Check your connection and try again.</string>
     <string name="player_remove_from_queue">Remove from queue</string>
     <string name="player_skip_next">Skip to next</string>
     <string name="player_move_up">Move up</string>

@@ -21,9 +21,9 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideClock(): Clock = SystemClock
+    fun provideOkHttpClient(): OkHttpClient = OkHttpClient()
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient = OkHttpClient()
+    fun provideClock(): Clock = SystemClock
 }

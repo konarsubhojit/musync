@@ -43,6 +43,68 @@ function createApp(options = {}) {
     res.json({ status: 'ok' });
   });
 
+  // ── YouTube search proxy ──────────────────────────────────────────────────
+  // GET /api/youtube/search?q=<query>
+  // Proxies to the YouTube Data API v3 search endpoint so the API key stays
+  // server-side and is never shipped inside the Android APK.
+  //
+  // Configuration (env vars):
+  //   YOUTUBE_API_KEY   YouTube Data API v3 key (required for this route to work).
+  //                     When unset the route responds 503.
+  //   YOUTUBE_SEARCH_TIMEOUT_MS  Fetch timeout in ms (default: 8000).
+  app.get('/api/youtube/search', async (req, res) => {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'YouTube search not configured' });
+      return;
+    }
+    const q = (req.query.q ?? '').trim();
+    if (!q) {
+      res.status(400).json({ error: 'Missing search query' });
+      return;
+    }
+    if (q.length > 200) {
+      res.status(400).json({ error: 'Search query too long' });
+      return;
+    }
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const url = new URL('https://www.googleapis.com/youtube/v3/search');
+      url.searchParams.set('part', 'snippet');
+      url.searchParams.set('type', 'video');
+      url.searchParams.set('q', q);
+      url.searchParams.set('maxResults', '10');
+      url.searchParams.set('key', apiKey);
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) {
+        res.status(502).json({ error: 'YouTube API error' });
+        return;
+      }
+      const data = await response.json();
+      const items = (data.items ?? []).map((item) => ({
+        videoId: item.id.videoId,
+        title: item.snippet.title,
+        channelTitle: item.snippet.channelTitle,
+        thumbnailUrl:
+          item.snippet.thumbnails?.medium?.url ??
+          item.snippet.thumbnails?.default?.url ??
+          '',
+      }));
+      res.json({ items });
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        res.status(504).json({ error: 'YouTube API request timed out' });
+      } else {
+        console.error('[youtube-search] error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   // ── Android App Links: assetlinks.json ────────────────────────────────────
   // Served at the well-known location Android fetches when verifying
   // `<intent-filter android:autoVerify="true">` links of the form

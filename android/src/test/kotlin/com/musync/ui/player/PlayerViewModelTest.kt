@@ -6,9 +6,11 @@ import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import io.mockk.mockk
@@ -441,6 +443,125 @@ class PlayerViewModelTest {
             verify(exactly = 0) { receiver.attachPlayer(any(), any(), any()) }
         }
 
+    // --- YouTube search ---
+
+    private val sampleSearchResult =
+        YouTubeSearchResult(
+            videoId = "abc123",
+            title = "A great song",
+            channelTitle = "Great Channel",
+            thumbnailUrl = "https://example.com/thumb.jpg",
+        )
+
+    @Test
+    fun `onSearch sets isSearching while pending and clears on success`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(result = Result.success(listOf(sampleSearchResult)))
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            viewModel.onAddToQueueInputChanged("great song")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertFalse("isSearching should be false after search completes", state.isSearching)
+            assertFalse("searchError should be false on success", state.searchError)
+            assertEquals(1, state.searchResults.size)
+            assertEquals("abc123", state.searchResults[0].videoId)
+        }
+
+    @Test
+    fun `onSearch sets searchError on failure`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(result = Result.failure(Exception("Network error")))
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            viewModel.onAddToQueueInputChanged("some query")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertFalse("isSearching should be false after failure", state.isSearching)
+            assertTrue("searchError should be true on failure", state.searchError)
+            assertTrue("searchResults should be empty on failure", state.searchResults.isEmpty())
+        }
+
+    @Test
+    fun `onSearch is a no-op when input is blank`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            // Input is blank (default); calling onSearch should not change state
+            viewModel.onSearch()
+            advanceUntilIdle()
+            assertFalse(viewModel.uiState.value.isSearching)
+        }
+
+    @Test
+    fun `onSearchResultSelected adds track to queue and closes sheet`() =
+        runTest {
+            var addedTrack: Track? = null
+            val musicRepo =
+                object : MusicRepository {
+                    override val currentTrack: Flow<Track?> = MutableStateFlow(null)
+                    override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+
+                    override fun updateQueue(tracks: List<Track>) = Unit
+
+                    override fun addToQueue(track: Track) {
+                        addedTrack = track
+                    }
+                }
+            val viewModel = buildHostViewModel(musicRepository = musicRepo)
+            viewModel.onAddToQueueClicked()
+            viewModel.onSearchResultSelected(sampleSearchResult)
+            advanceUntilIdle()
+            assertNotNull("A track should have been added to the queue", addedTrack)
+            assertEquals("abc123", addedTrack!!.youtubeVideoId)
+            assertEquals("A great song", addedTrack!!.title)
+            assertEquals("Great Channel", addedTrack!!.artist)
+            assertFalse("Sheet should be closed", viewModel.uiState.value.addToQueueSheetVisible)
+            assertTrue("searchResults should be cleared", viewModel.uiState.value.searchResults.isEmpty())
+        }
+
+    @Test
+    fun `onAddToQueueClicked resets search state`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(result = Result.success(listOf(sampleSearchResult)))
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            // Perform a search then re-open the sheet
+            viewModel.onAddToQueueInputChanged("test")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            assertEquals(1, viewModel.uiState.value.searchResults.size)
+            // Re-opening the sheet should clear results
+            viewModel.onAddToQueueClicked()
+            assertTrue(viewModel.uiState.value.searchResults.isEmpty())
+            assertFalse(viewModel.uiState.value.isSearching)
+            assertFalse(viewModel.uiState.value.searchError)
+        }
+
+    @Test
+    fun `onAddToQueueDismissed resets search state`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(result = Result.success(listOf(sampleSearchResult)))
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            viewModel.onAddToQueueInputChanged("test")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            viewModel.onAddToQueueDismissed()
+            assertTrue(viewModel.uiState.value.searchResults.isEmpty())
+            assertFalse(viewModel.uiState.value.isSearching)
+        }
+
+    @Test
+    fun `onAddToQueueConfirm resets search state on success`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(result = Result.success(listOf(sampleSearchResult)))
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            viewModel.onAddToQueueInputChanged("https://youtu.be/jNQXAC9IVRw")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            viewModel.onAddToQueueConfirm()
+            assertTrue(viewModel.uiState.value.searchResults.isEmpty())
+            assertFalse(viewModel.uiState.value.addToQueueSheetVisible)
+        }
+
     // --- Queue management ---
 
     @Test
@@ -654,6 +775,7 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+        youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(),
@@ -661,6 +783,7 @@ class PlayerViewModelTest {
         sessionRepository,
         syncEmitter,
         playbackSyncReceiver,
+        youTubeSearchRepository,
         recentRoomsRepository,
     )
 
@@ -674,6 +797,7 @@ class PlayerViewModelTest {
         sessionRepository: SessionRepository = FakeSessionRepository(),
         syncEmitter: SyncEmitter = mockk(relaxed = true),
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+        youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
@@ -681,6 +805,7 @@ class PlayerViewModelTest {
         sessionRepository,
         syncEmitter,
         playbackSyncReceiver,
+        youTubeSearchRepository,
         recentRoomsRepository,
     )
 
@@ -736,7 +861,10 @@ class PlayerViewModelTest {
             endSessionCalled = true
         }
 
-        override fun sendChatMessage(text: String, senderName: String) = Unit
+        override fun sendChatMessage(
+            text: String,
+            senderName: String,
+        ) = Unit
 
         override fun sendReaction(emoji: String) = Unit
 
@@ -772,5 +900,14 @@ class PlayerViewModelTest {
         ) = Unit
 
         override fun clearHistory() = Unit
+    }
+
+    /**
+     * Fake [YouTubeSearchRepository] that can be configured to return success or failure.
+     */
+    private class FakeYouTubeSearchRepository(
+        private val result: Result<List<YouTubeSearchResult>> = Result.success(emptyList()),
+    ) : YouTubeSearchRepository {
+        override suspend fun search(query: String): Result<List<YouTubeSearchResult>> = result
     }
 }

@@ -27,14 +27,15 @@ class RoomStatusCheckerImpl
                 try {
                     val url = "${BuildConfig.SERVER_URL}/room/$roomId/status"
                     val request = Request.Builder().url(url).get().build()
-                    val response = okHttpClient.newCall(request).execute()
-                    if (!response.isSuccessful) return@withContext null
-                    val body = response.body?.string() ?: return@withContext null
-                    val json = JSONObject(body)
-                    RoomStatus(
-                        active = json.getBoolean("active"),
-                        listenerCount = json.getInt("listenerCount"),
-                    )
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@withContext null
+                        val body = response.body?.string() ?: return@withContext null
+                        val json = JSONObject(body)
+                        RoomStatus(
+                            active = json.getBoolean("active"),
+                            listenerCount = json.getInt("listenerCount"),
+                        )
+                    }
                 } catch (e: IOException) {
                     AppLogger.w(TAG, "Network error fetching status for room $roomId: $e")
                     null

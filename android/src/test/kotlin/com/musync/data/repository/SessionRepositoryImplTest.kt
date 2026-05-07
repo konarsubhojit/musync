@@ -309,10 +309,11 @@ class SessionRepositoryImplTest {
 
             val received =
                 collectChatMessages {
-                    val payload = JSONObject()
-                        .put("senderId", "user-1")
-                        .put("senderName", "Alice")
-                        .put("text", "Hello!")
+                    val payload =
+                        JSONObject()
+                            .put("senderId", "user-1")
+                            .put("senderName", "Alice")
+                            .put("text", "Hello!")
                     chatMessageListener?.call(payload)
                 }
 
@@ -346,10 +347,11 @@ class SessionRepositoryImplTest {
 
             val received =
                 collectChatMessages {
-                    val payload = JSONObject()
-                        .put("senderId", "user-1")
-                        .put("senderName", "Alice")
-                        .put("text", "   ")
+                    val payload =
+                        JSONObject()
+                            .put("senderId", "user-1")
+                            .put("senderName", "Alice")
+                            .put("text", "   ")
                     chatMessageListener?.call(payload)
                 }
 
@@ -541,4 +543,3 @@ class SessionRepositoryImplTest {
             assertTrue("Expected at least one PeerLeft event", emitted.any { it is SyncEvent.PeerLeft })
         }
 }
-

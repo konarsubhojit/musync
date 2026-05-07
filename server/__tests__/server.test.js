@@ -79,6 +79,123 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── YouTube search proxy ──────────────────────────────────────────────────
+  describe('GET /api/youtube/search', () => {
+    const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
+      else process.env.YOUTUBE_API_KEY = originalApiKey;
+      // Restore the global fetch if it was replaced
+      global.fetch = originalFetch;
+    });
+
+    it('returns 503 when YOUTUBE_API_KEY is not configured', async () => {
+      delete process.env.YOUTUBE_API_KEY;
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({ error: expect.any(String) });
+    });
+
+    it('returns 400 when no query parameter is provided', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const res = await request(app).get('/api/youtube/search');
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: expect.any(String) });
+    });
+
+    it('returns 400 when the query parameter is blank', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const res = await request(app).get('/api/youtube/search?q=');
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 when the query exceeds 200 characters', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const longQuery = 'a'.repeat(201);
+      const res = await request(app).get(`/api/youtube/search?q=${longQuery}`);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 504 when the YouTube API request times out', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockRejectedValue(Object.assign(new Error('abort'), { name: 'AbortError' }));
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(504);
+    });
+
+    it('returns mapped items from the YouTube API response', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: { videoId: 'abc123' },
+              snippet: {
+                title: 'Test Video',
+                channelTitle: 'Test Channel',
+                thumbnails: {
+                  medium: { url: 'https://example.com/thumb.jpg' },
+                },
+              },
+            },
+          ],
+        }),
+      });
+      const res = await request(app).get('/api/youtube/search?q=test+song');
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0]).toEqual({
+        videoId: 'abc123',
+        title: 'Test Video',
+        channelTitle: 'Test Channel',
+        thumbnailUrl: 'https://example.com/thumb.jpg',
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('q=test+song'),
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
+    });
+
+    it('returns 502 when the YouTube API responds with an error status', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 });
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(502);
+    });
+
+    it('returns 500 when fetch throws', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockRejectedValue(new Error('network error'));
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(500);
+    });
+
+    it('falls back to default thumbnail when medium thumbnail is absent', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: { videoId: 'xyz' },
+              snippet: {
+                title: 'No Medium',
+                channelTitle: 'Channel',
+                thumbnails: { default: { url: 'https://example.com/default.jpg' } },
+              },
+            },
+          ],
+        }),
+      });
+      const res = await request(app).get('/api/youtube/search?q=fallback');
+      expect(res.status).toBe(200);
+      expect(res.body.items[0].thumbnailUrl).toBe('https://example.com/default.jpg');
+    });
+  });
+
   // ── Socket.IO helpers ─────────────────────────────────────────────────────
   function connect() {
     return new Promise((resolve) => {

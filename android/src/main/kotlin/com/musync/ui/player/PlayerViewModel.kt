@@ -8,9 +8,11 @@ import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -35,6 +37,7 @@ class PlayerViewModel
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
         private val playbackSyncReceiver: PlaybackSyncReceiver,
+        private val youTubeSearchRepository: YouTubeSearchRepository,
         private val recentRoomsRepository: RecentRoomsRepository,
     ) : ViewModel() {
         companion object {
@@ -110,6 +113,9 @@ class PlayerViewModel
 
         /** Tracks the active job that clears [PlayerUiState.presenceEvent] after a delay. */
         private var presenceResetJob: Job? = null
+
+        /** Tracks the active YouTube search coroutine so rapid calls cancel stale requests. */
+        private var searchJob: Job? = null
 
         /**
          * `true` only when the local player was most recently in a PLAYING state.
@@ -493,13 +499,25 @@ class PlayerViewModel
                     addToQueueSheetVisible = true,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }
 
         /** Dismisses the "Add to queue" bottom sheet. */
         fun onAddToQueueDismissed() {
-            _uiState.update { it.copy(addToQueueSheetVisible = false) }
+            searchJob?.cancel()
+            searchJob = null
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
         }
 
         /** Updates the input field of the bottom sheet. */
@@ -519,6 +537,8 @@ class PlayerViewModel
                 _uiState.update { it.copy(addToQueueError = true) }
                 return
             }
+            searchJob?.cancel()
+            searchJob = null
             musicRepository.addToQueue(
                 Track(
                     id = UUID.randomUUID().toString(),
@@ -533,6 +553,70 @@ class PlayerViewModel
                     addToQueueSheetVisible = false,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
+        }
+
+        /**
+         * Launches a YouTube search for the current [PlayerUiState.addToQueueInput].
+         * Cancels any in-flight search before starting a new one so that stale results
+         * from a previous query cannot overwrite newer ones.
+         * Stores the results in [PlayerUiState.searchResults] on success, or sets
+         * [PlayerUiState.searchError] on failure.  No-op when the input is blank.
+         */
+        fun onSearch() {
+            val query = _uiState.value.addToQueueInput.trim()
+            if (query.isEmpty()) return
+            searchJob?.cancel()
+            _uiState.update { it.copy(isSearching = true, searchError = false, searchResults = emptyList()) }
+            searchJob =
+                viewModelScope.launch {
+                    val result = youTubeSearchRepository.search(query)
+                    _uiState.update { state ->
+                        result.fold(
+                            onSuccess = { items ->
+                                state.copy(isSearching = false, searchResults = items, searchError = false)
+                            },
+                            onFailure = {
+                                state.copy(isSearching = false, searchError = true)
+                            },
+                        )
+                    }
+                }
+        }
+
+        /**
+         * Adds the given YouTube search result directly to the queue and closes the
+         * "Add to queue" bottom sheet.
+         *
+         * [Track.durationMs] is set to 0 because the YouTube search API does not
+         * return video duration; the player resolves the real duration on playback
+         * via [PlayerViewModel.onDurationReceived].  This mirrors the behaviour of
+         * the URL-paste flow ([onAddToQueueConfirm]).
+         */
+        fun onSearchResultSelected(result: YouTubeSearchResult) {
+            searchJob?.cancel()
+            searchJob = null
+            musicRepository.addToQueue(
+                Track(
+                    id = UUID.randomUUID().toString(),
+                    title = result.title,
+                    artist = result.channelTitle,
+                    youtubeVideoId = result.videoId,
+                    durationMs = 0L,
+                ),
+            )
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    addToQueueInput = "",
+                    addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }

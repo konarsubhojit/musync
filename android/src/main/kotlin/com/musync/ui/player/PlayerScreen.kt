@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,10 +23,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
@@ -78,17 +80,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
 import com.musync.R
 import com.musync.data.model.ChatMessage
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
@@ -314,8 +318,13 @@ fun PlayerScreen(
             AddToQueueBottomSheet(
                 input = uiState.addToQueueInput,
                 isError = uiState.addToQueueError,
+                isSearching = uiState.isSearching,
+                searchResults = uiState.searchResults,
+                searchError = uiState.searchError,
                 onInputChanged = viewModel::onAddToQueueInputChanged,
+                onSearch = viewModel::onSearch,
                 onConfirm = viewModel::onAddToQueueConfirm,
+                onSearchResultSelected = viewModel::onSearchResultSelected,
                 onDismiss = viewModel::onAddToQueueDismissed,
             )
         }
@@ -794,12 +803,13 @@ private fun ChatMessageRow(message: ChatMessage) {
         }
         Surface(
             color = bubbleColor,
-            shape = RoundedCornerShape(
-                topStart = if (message.isLocal) 16.dp else 4.dp,
-                topEnd = if (message.isLocal) 4.dp else 16.dp,
-                bottomStart = 16.dp,
-                bottomEnd = 16.dp,
-            ),
+            shape =
+                RoundedCornerShape(
+                    topStart = if (message.isLocal) 16.dp else 4.dp,
+                    topEnd = if (message.isLocal) 4.dp else 16.dp,
+                    bottomStart = 16.dp,
+                    bottomEnd = 16.dp,
+                ),
             modifier = Modifier.widthIn(max = 280.dp),
         ) {
             Text(
@@ -1002,8 +1012,13 @@ private fun QueueRow(
 private fun AddToQueueBottomSheet(
     input: String,
     isError: Boolean,
+    isSearching: Boolean,
+    searchResults: List<YouTubeSearchResult>,
+    searchError: Boolean,
     onInputChanged: (String) -> Unit,
+    onSearch: () -> Unit,
     onConfirm: () -> Unit,
+    onSearchResultSelected: (YouTubeSearchResult) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -1032,6 +1047,17 @@ private fun AddToQueueBottomSheet(
                 isError = isError,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(
+                        onClick = onSearch,
+                        enabled = input.isNotBlank() && !isSearching,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = stringResource(R.string.player_search_youtube),
+                        )
+                    }
+                },
             )
             if (isError) {
                 Text(
@@ -1041,6 +1067,46 @@ private fun AddToQueueBottomSheet(
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                 )
             }
+
+            // ── Search results area ─────────────────────────────────────────
+            when {
+                isSearching -> {
+                    Spacer(Modifier.height(16.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+                searchError -> {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.player_search_error),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    )
+                }
+                searchResults.isNotEmpty() -> {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.player_search_results),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        items(searchResults, key = { it.videoId }) { result ->
+                            SearchResultItem(
+                                result = result,
+                                onClick = { onSearchResultSelected(result) },
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
@@ -1053,6 +1119,47 @@ private fun AddToQueueBottomSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun SearchResultItem(
+    result: YouTubeSearchResult,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = result.thumbnailUrl,
+            contentDescription = null,
+            modifier =
+                Modifier
+                    .size(72.dp, 54.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+        )
+        Spacer(Modifier.size(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = result.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = result.channelTitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
