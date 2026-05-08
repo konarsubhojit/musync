@@ -42,11 +42,8 @@
     <string name="player_invite_card_title">Invite friends</string>
     <string name="player_copy_link">Copy link</string>
     <string name="player_participants_title">Listeners</string>
-    <string name="player_participant_you">You</string>
-    <string name="player_participant_you_initial">Y</string>
-    <string name="player_participant_count">%1$d listening</string>
-    <string name="player_listener_initial">L</string>
-    <string name="player_listener_name">Listener %1$d</string>
+    <string name="player_participant_anonymous">Anonymous</string>
+    <string name="player_participant_connecting">Connecting…</string>
     <string name="player_peer_joined">A new listener joined the room</string>
     <string name="player_peer_left">A listener left the room</string>
     <string name="player_queue_empty">Queue is empty. Tap + to add a track.</string>
@@ -82,4 +79,3 @@
     <string name="settings_export_logs_button">Choose folder &amp; export</string>
     <string name="settings_export_logs_in_progress">Exporting…</string>
 </resources>
-

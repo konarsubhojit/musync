@@ -8,6 +8,8 @@ import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.RecentRoomsRepositoryImpl
 import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.SessionRepositoryImpl
+import com.musync.data.repository.UserPreferencesRepository
+import com.musync.data.repository.UserPreferencesRepositoryImpl
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.data.repository.YouTubeSearchRepositoryImpl
 import dagger.Binds
@@ -38,4 +40,8 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindRoomStatusChecker(impl: RoomStatusCheckerImpl): RoomStatusChecker
+
+    @Binds
+    @Singleton
+    abstract fun bindUserPreferencesRepository(impl: UserPreferencesRepositoryImpl): UserPreferencesRepository
 }

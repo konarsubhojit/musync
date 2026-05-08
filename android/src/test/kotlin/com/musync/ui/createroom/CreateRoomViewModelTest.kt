@@ -1,8 +1,15 @@
 package com.musync.ui.createroom
 
+import com.musync.data.repository.UserPreferencesRepository
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -19,6 +26,11 @@ import org.junit.Test
 class CreateRoomViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
+    private val userPrefs =
+        mockk<UserPreferencesRepository>(relaxed = true) {
+            every { displayName } returns flowOf("")
+        }
+
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
@@ -32,7 +44,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `initial state has empty input and no parsed video`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             val state = viewModel.uiState.value
             assertEquals("", state.urlInput)
             assertNull(state.videoId)
@@ -44,7 +56,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `entering a valid YouTube URL parses the video id`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onUrlChanged("https://www.youtube.com/watch?v=jNQXAC9IVRw")
             val state = viewModel.uiState.value
             assertEquals("jNQXAC9IVRw", state.videoId)
@@ -54,7 +66,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `entering an invalid URL flags an error`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onUrlChanged("not a youtube link")
             val state = viewModel.uiState.value
             assertNull(state.videoId)
@@ -64,7 +76,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `clearing the URL field clears the error`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onUrlChanged("garbage")
             assertTrue(viewModel.uiState.value.urlError)
             viewModel.onUrlChanged("")
@@ -74,7 +86,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `onStartRoom is a no-op when no valid videoId is present`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onStartRoom()
             assertFalse(viewModel.uiState.value.started)
             assertNull(viewModel.uiState.value.sessionId)
@@ -83,7 +95,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `onStartRoom generates a sessionId when videoId is valid`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onUrlChanged("jNQXAC9IVRw")
             viewModel.onStartRoom()
             val state = viewModel.uiState.value
@@ -95,7 +107,7 @@ class CreateRoomViewModelTest {
     @Test
     fun `onNavigationConsumed clears started flag`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onUrlChanged("jNQXAC9IVRw")
             viewModel.onStartRoom()
             assertTrue(viewModel.uiState.value.started)
@@ -106,8 +118,67 @@ class CreateRoomViewModelTest {
     @Test
     fun `onDisplayNameChanged updates the display name`() =
         runTest {
-            val viewModel = CreateRoomViewModel()
+            val viewModel = CreateRoomViewModel(userPrefs)
             viewModel.onDisplayNameChanged("Alice")
             assertEquals("Alice", viewModel.uiState.value.displayName)
+        }
+
+    @Test
+    fun `saved display name is pre-filled on init`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("Bob")
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            advanceUntilIdle() // allow the init coroutine to complete
+            assertEquals("Bob", viewModel.uiState.value.displayName)
+        }
+
+    @Test
+    fun `saved display name does not overwrite user edits made before DataStore resolves`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("Saved")
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            // User types before DataStore resolves
+            viewModel.onDisplayNameChanged("User Input")
+            advanceUntilIdle() // DataStore resolves after user typed
+            assertEquals("User Input", viewModel.uiState.value.displayName)
+        }
+
+    @Test
+    fun `onStartRoom saves the display name to preferences`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("")
+                    coEvery { saveDisplayName(any()) } returns Unit
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            viewModel.onUrlChanged("jNQXAC9IVRw")
+            viewModel.onDisplayNameChanged("Carol")
+            viewModel.onStartRoom()
+            advanceUntilIdle()
+            coVerify { prefs.saveDisplayName("Carol") }
+        }
+
+    @Test
+    fun `onStartRoom trims and caps display name to 50 characters before saving`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("")
+                    coEvery { saveDisplayName(any()) } returns Unit
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            viewModel.onUrlChanged("jNQXAC9IVRw")
+            val longName = "A".repeat(60)
+            viewModel.onDisplayNameChanged("  $longName  ")
+            viewModel.onStartRoom()
+            advanceUntilIdle()
+            coVerify { prefs.saveDisplayName("A".repeat(50)) }
         }
 }

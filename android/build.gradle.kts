@@ -191,6 +191,9 @@ dependencies {
     // Image loading (used for YouTube thumbnails on CreateRoomScreen)
     implementation(libs.coil.compose)
 
+    // DataStore
+    implementation(libs.androidx.datastore.preferences)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.mockk)

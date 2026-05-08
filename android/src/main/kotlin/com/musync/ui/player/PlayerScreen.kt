@@ -91,6 +91,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.musync.R
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.Participant
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
@@ -175,7 +176,7 @@ fun PlayerScreen(
         topBar = {
             PlayerTopBar(
                 title = uiState.trackTitle.ifEmpty { stringResource(R.string.app_name) },
-                participantCount = uiState.participantCount,
+                participantCount = uiState.participants.size.coerceAtLeast(1),
                 onBack = viewModel::onBackPressed,
             )
         },
@@ -288,6 +289,7 @@ fun PlayerScreen(
                     PlayerTab.Room ->
                         RoomTab(
                             inviteLink = uiState.inviteLink,
+                            participants = uiState.participants,
                             chatMessages = uiState.chatMessages,
                             chatInput = uiState.chatInput,
                             typingUsers = uiState.typingUsers,
@@ -589,6 +591,7 @@ private val REACTION_EMOJIS = listOf("🔥", "❤️", "😂", "👏", "😮")
 @Composable
 private fun RoomTab(
     inviteLink: String,
+    participants: List<Participant>,
     chatMessages: List<ChatMessage>,
     chatInput: String,
     typingUsers: Set<String>,
@@ -656,6 +659,35 @@ private fun RoomTab(
                 }
             }
         }
+
+        // ── Listeners section ─────────────────────────────────────────────
+        Text(
+            text = stringResource(R.string.player_participants_title),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (participants.isEmpty()) {
+                ParticipantChip(initials = "?", displayName = stringResource(R.string.player_participant_connecting))
+            } else {
+                participants.forEach { participant ->
+                    val name = participant.displayName.ifBlank { stringResource(R.string.player_participant_anonymous) }
+                    ParticipantChip(
+                        initials = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                        displayName = name,
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
         // ── Reaction buttons ──────────────────────────────────────────────
         Row(
@@ -823,37 +855,41 @@ private fun ChatMessageRow(message: ChatMessage) {
 }
 
 @Composable
-private fun ParticipantRow(
-    initial: String,
-    name: String,
+private fun ParticipantChip(
+    initials: String,
+    displayName: String,
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Box(
                 modifier =
                     Modifier
-                        .size(36.dp)
+                        .size(24.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = initial,
+                    text = initials,
                     color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                 )
             }
-            Spacer(Modifier.size(12.dp))
             Text(
-                text = name,
-                style = MaterialTheme.typography.bodyLarge,
+                text = displayName,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

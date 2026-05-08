@@ -1,6 +1,7 @@
 package com.musync.data.repository
 
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
@@ -15,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +39,7 @@ class SessionRepositoryImplTest {
     private var typingListener: Emitter.Listener? = null
     private var peerJoinedListener: Emitter.Listener? = null
     private var peerLeftListener: Emitter.Listener? = null
+    private var participantsUpdatedListener: Emitter.Listener? = null
 
     private val hostSession = Session(sessionId = "session-1", hostId = "user-1", localUserId = "user-1")
     private val guestSession = Session(sessionId = "session-1", hostId = "user-1", localUserId = "user-2")
@@ -94,6 +97,11 @@ class SessionRepositoryImplTest {
         val peerLeftSlot = slot<Emitter.Listener>()
         every { socket.on("peer_left", capture(peerLeftSlot)) } answers {
             peerLeftListener = peerLeftSlot.captured
+            socket
+        }
+        val participantsUpdatedSlot = slot<Emitter.Listener>()
+        every { socket.on("PARTICIPANTS_UPDATED", capture(participantsUpdatedSlot)) } answers {
+            participantsUpdatedListener = participantsUpdatedSlot.captured
             socket
         }
         repository = SessionRepositoryImpl(socket)
@@ -550,5 +558,62 @@ class SessionRepositoryImplTest {
             repository.joinSession(guestSession)
             val emitted = collectEvents { peerLeftListener?.call() }
             assertTrue("Expected at least one PeerLeft event", emitted.any { it is SyncEvent.PeerLeft })
+        }
+
+    // ------------------------------------------------------------------
+    // PARTICIPANTS_UPDATED
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `emits ParticipantsUpdated when PARTICIPANTS_UPDATED event is received`() =
+        runTest {
+            repository.joinSession(hostSession)
+            val payload =
+                JSONObject().apply {
+                    put(
+                        "participants",
+                        JSONArray().apply {
+                            put(
+                                JSONObject().apply {
+                                    put("socketId", "s1")
+                                    put("displayName", "Alice")
+                                },
+                            )
+                            put(
+                                JSONObject().apply {
+                                    put("socketId", "s2")
+                                    put("displayName", "Bob")
+                                },
+                            )
+                        },
+                    )
+                }
+            val emitted = collectEvents { participantsUpdatedListener?.call(payload) }
+            val event = emitted.filterIsInstance<SyncEvent.ParticipantsUpdated>().firstOrNull()
+            assertFalse("Expected a ParticipantsUpdated event", event == null)
+            assertEquals(
+                listOf(
+                    Participant(socketId = "s1", displayName = "Alice"),
+                    Participant(socketId = "s2", displayName = "Bob"),
+                ),
+                event!!.participants,
+            )
+        }
+
+    @Test
+    fun `joinSession emits JOIN_ROOM with displayName in JSONObject payload`() =
+        runTest {
+            val session = hostSession.copy(displayName = "Alice")
+            repository.joinSession(session)
+            verify {
+                socket.emit(
+                    eq("join_room"),
+                    match<JSONObject> { obj ->
+                        obj.optString("roomId") == session.sessionId &&
+                            obj.optString("displayName") == "Alice"
+                    },
+                    any(),
+                )
+            }
         }
 }

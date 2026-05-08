@@ -1,6 +1,7 @@
 package com.musync.ui.player
 
 import androidx.lifecycle.SavedStateHandle
+import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
@@ -10,6 +11,7 @@ import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -166,6 +169,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "room-abc", sessionRepository = sessionRepo)
+            advanceUntilIdle()
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals("room-abc", joined!!.sessionId)
@@ -176,6 +180,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals(joined!!.localUserId, joined.hostId)
@@ -200,6 +205,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "   ", sessionRepository = sessionRepo)
+            advanceUntilIdle()
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals(joined!!.localUserId, joined.hostId)
@@ -210,6 +216,7 @@ class PlayerViewModelTest {
         runTest {
             val sessionRepo = FakeSessionRepository()
             buildViewModelWithRoomId(roomId = "room-xyz", sessionRepository = sessionRepo)
+            advanceUntilIdle()
             val joined = sessionRepo.session.value
             assertNotNull(joined)
             assertEquals(PlayerViewModel.DEEP_LINK_HOST_ID_PLACEHOLDER, joined!!.hostId)
@@ -513,6 +520,7 @@ class PlayerViewModelTest {
             advanceUntilIdle()
             viewModel.onPlaybackStateChanged(isPlaying = true)
             verify { emitter.emitPlay(any(), any()) }
+            viewModel.onPlaybackStateChanged(isPlaying = false)
         }
 
     @Test
@@ -830,40 +838,56 @@ class PlayerViewModelTest {
             verify(exactly = 0) { emitter.emitQueueUpdated(any(), any()) }
         }
 
-    // --- Participant count ---
+    // --- Participant list ---
 
     @Test
-    fun `MembersSnapshot event sets participantCount`() =
+    fun `MembersSnapshot event is a no-op on participants list`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
             advanceUntilIdle()
             sessionRepo.emitMembersSnapshot(5)
             advanceUntilIdle()
-            assertEquals(5, viewModel.uiState.value.participantCount)
+            // participantCount is now derived from PARTICIPANTS_UPDATED; MembersSnapshot is ignored
+            assertEquals(emptyList<Participant>(), viewModel.uiState.value.participants)
         }
 
     @Test
-    fun `PeerJoined event increments participantCount`() =
+    fun `PeerJoined event surfaces a presence notification`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
             advanceUntilIdle()
-            val initialCount = viewModel.uiState.value.participantCount
             sessionRepo.emitPeerJoined()
-            advanceUntilIdle()
-            assertEquals(initialCount + 1, viewModel.uiState.value.participantCount)
+            runCurrent()
+            assertNotNull(viewModel.uiState.value.presenceEvent)
         }
 
     @Test
-    fun `PeerLeft event decrements participantCount but never below 1`() =
+    fun `PeerLeft event surfaces a presence notification`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
             val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
             advanceUntilIdle()
             sessionRepo.emitPeerLeft()
+            runCurrent()
+            assertNotNull(viewModel.uiState.value.presenceEvent)
+        }
+
+    @Test
+    fun `ParticipantsUpdated event updates participants list`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
             advanceUntilIdle()
-            assertEquals(1, viewModel.uiState.value.participantCount)
+            val expected =
+                listOf(
+                    Participant(socketId = "s1", displayName = "Alice"),
+                    Participant(socketId = "s2", displayName = "Bob"),
+                )
+            sessionRepo.emitParticipantsUpdated(expected)
+            advanceUntilIdle()
+            assertEquals(expected, viewModel.uiState.value.participants)
         }
 
     @Test
@@ -910,6 +934,7 @@ class PlayerViewModelTest {
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
+        userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(),
         musicRepository,
@@ -918,6 +943,7 @@ class PlayerViewModelTest {
         playbackSyncReceiver,
         youTubeSearchRepository,
         recentRoomsRepository,
+        userPreferencesRepository,
     )
 
     private fun buildViewModelWithRoomId(
@@ -928,6 +954,7 @@ class PlayerViewModelTest {
         playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
+        userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
@@ -936,6 +963,7 @@ class PlayerViewModelTest {
         playbackSyncReceiver,
         youTubeSearchRepository,
         recentRoomsRepository,
+        userPreferencesRepository,
     )
 
     // --- Fake repositories ---
@@ -1009,6 +1037,9 @@ class PlayerViewModelTest {
         fun emitMembersSnapshot(count: Int) { _events.tryEmit(SyncEvent.MembersSnapshot(count)) }
         fun emitPeerJoined() { _events.tryEmit(SyncEvent.PeerJoined) }
         fun emitPeerLeft() { _events.tryEmit(SyncEvent.PeerLeft) }
+        fun emitParticipantsUpdated(participants: List<Participant>) {
+            _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
+        }
     }
 
     private class FakeRecentRoomsRepository : RecentRoomsRepository {
@@ -1021,5 +1052,12 @@ class PlayerViewModelTest {
         private val result: Result<List<YouTubeSearchResult>> = Result.success(emptyList()),
     ) : YouTubeSearchRepository {
         override suspend fun search(query: String): Result<List<YouTubeSearchResult>> = result
+    }
+
+    private class FakeUserPreferencesRepository(
+        private val savedName: String = "",
+    ) : UserPreferencesRepository {
+        override val displayName = flowOf(savedName)
+        override suspend fun saveDisplayName(name: String) = Unit
     }
 }

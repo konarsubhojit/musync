@@ -1,6 +1,7 @@
 package com.musync.data.repository
 
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
@@ -97,14 +98,15 @@ class SessionRepositoryImpl
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 val senderName = obj.optString("senderName").ifBlank { "Someone" }
                 val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return@on
-                val message = ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    senderId = senderId,
-                    senderName = senderName,
-                    text = text,
-                    timestamp = System.currentTimeMillis(),
-                    isLocal = false,
-                )
+                val message =
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        senderId = senderId,
+                        senderName = senderName,
+                        text = text,
+                        timestamp = System.currentTimeMillis(),
+                        isLocal = false,
+                    )
                 _chatMessages.tryEmit(message)
             }
 
@@ -119,6 +121,19 @@ class SessionRepositoryImpl
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 _typingUsers.update { it + senderId }
                 scheduleTypingTimeout(senderId)
+            }
+
+            socket.on(SocketEvents.PARTICIPANTS_UPDATED) { args ->
+                val payload = args?.getOrNull(0) as? JSONObject ?: return@on
+                val participantsArray = payload.optJSONArray("participants") ?: return@on
+                val participants =
+                    (0 until participantsArray.length()).mapNotNull { i ->
+                        val obj = participantsArray.optJSONObject(i) ?: return@mapNotNull null
+                        val socketId = obj.optString("socketId").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                        val displayName = obj.optString("displayName")
+                        Participant(socketId = socketId, displayName = displayName)
+                    }
+                _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
             }
         }
 
@@ -140,9 +155,14 @@ class SessionRepositoryImpl
             playNextEmitted.set(false)
             _session.value = session
             socket.connect()
+            val payload =
+                JSONObject().apply {
+                    put("roomId", session.sessionId)
+                    put("displayName", session.displayName)
+                }
             socket.emit(
                 SocketEvents.JOIN_ROOM,
-                session.sessionId,
+                payload,
                 Ack { args ->
                     val data = (args.getOrNull(0) as? JSONObject)
                     val memberCount = data?.optInt("memberCount", 1) ?: 1
@@ -167,18 +187,22 @@ class SessionRepositoryImpl
             socket.emit(SocketEvents.END_SESSION, roomId)
         }
 
-        override fun sendChatMessage(text: String, senderName: String) {
+        override fun sendChatMessage(
+            text: String,
+            senderName: String,
+        ) {
             val session = _session.value ?: return
             val trimmedText = text.trim().takeIf { it.isNotBlank() } ?: return
             val trimmedName = senderName.trim().ifBlank { "You" }
-            val localMessage = ChatMessage(
-                id = UUID.randomUUID().toString(),
-                senderId = session.localUserId,
-                senderName = trimmedName,
-                text = trimmedText,
-                timestamp = System.currentTimeMillis(),
-                isLocal = true,
-            )
+            val localMessage =
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    senderId = session.localUserId,
+                    senderName = trimmedName,
+                    text = trimmedText,
+                    timestamp = System.currentTimeMillis(),
+                    isLocal = true,
+                )
             _chatMessages.tryEmit(localMessage)
             socket.emit(
                 SocketEvents.CHAT_MESSAGE,
@@ -211,43 +235,65 @@ class SessionRepositoryImpl
             )
         }
 
-        override fun transferHost(roomId: String, newHostSocketId: String) {
-            val payload = JSONObject().apply {
-                put("roomId", roomId)
-                put("newHostSocketId", newHostSocketId)
-            }
+        override fun transferHost(
+            roomId: String,
+            newHostSocketId: String,
+        ) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("newHostSocketId", newHostSocketId)
+                }
             socket.emit(SocketEvents.TRANSFER_HOST, payload)
         }
 
-        override fun setDemocraticMode(roomId: String, enabled: Boolean) {
-            val payload = JSONObject().apply {
-                put("roomId", roomId)
-                put("enabled", enabled)
-            }
+        override fun setDemocraticMode(
+            roomId: String,
+            enabled: Boolean,
+        ) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("enabled", enabled)
+                }
             socket.emit(SocketEvents.SET_DEMOCRATIC_MODE, payload)
         }
 
-        override fun setAutoApproveQueue(roomId: String, enabled: Boolean) {
-            val payload = JSONObject().apply {
-                put("roomId", roomId)
-                put("enabled", enabled)
-            }
+        override fun setAutoApproveQueue(
+            roomId: String,
+            enabled: Boolean,
+        ) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("enabled", enabled)
+                }
             socket.emit(SocketEvents.SET_AUTO_APPROVE_QUEUE, payload)
         }
 
-        override fun requestQueueAdd(roomId: String, trackId: String, trackTitle: String) {
-            val payload = JSONObject().apply {
-                put("roomId", roomId)
-                put("track", JSONObject().put("id", trackId).put("title", trackTitle))
-            }
+        override fun requestQueueAdd(
+            roomId: String,
+            trackId: String,
+            trackTitle: String,
+        ) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("track", JSONObject().put("id", trackId).put("title", trackTitle))
+                }
             socket.emit(SocketEvents.REQUEST_QUEUE_ADD, payload)
         }
 
-        override fun approveQueueAdd(roomId: String, trackId: String, trackTitle: String) {
-            val payload = JSONObject().apply {
-                put("roomId", roomId)
-                put("track", JSONObject().put("id", trackId).put("title", trackTitle))
-            }
+        override fun approveQueueAdd(
+            roomId: String,
+            trackId: String,
+            trackTitle: String,
+        ) {
+            val payload =
+                JSONObject().apply {
+                    put("roomId", roomId)
+                    put("track", JSONObject().put("id", trackId).put("title", trackTitle))
+                }
             socket.emit(SocketEvents.APPROVE_QUEUE_ADD, payload)
         }
 
@@ -271,11 +317,12 @@ class SessionRepositoryImpl
             repositoryScope.launch {
                 typingJobsMutex.withLock {
                     typingJobs[senderId]?.cancel()
-                    typingJobs[senderId] = repositoryScope.launch {
-                        delay(TYPING_TIMEOUT_MS)
-                        _typingUsers.update { it - senderId }
-                        typingJobsMutex.withLock { typingJobs.remove(senderId) }
-                    }
+                    typingJobs[senderId] =
+                        repositoryScope.launch {
+                            delay(TYPING_TIMEOUT_MS)
+                            _typingUsers.update { it - senderId }
+                            typingJobsMutex.withLock { typingJobs.remove(senderId) }
+                        }
                 }
             }
         }

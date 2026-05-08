@@ -27,4 +27,6 @@ sealed class SyncEvent {
      * and autoApproveQueue is disabled.
      */
     data class QueueAddRequest(val trackId: String, val trackTitle: String) : SyncEvent()
+    /** Emitted when the server broadcasts an updated participant list for the room. */
+    data class ParticipantsUpdated(val participants: List<Participant>) : SyncEvent()
 }

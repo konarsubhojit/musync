@@ -1,13 +1,17 @@
 package com.musync.ui.createroom
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.logging.AppLogger
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.random.Random
@@ -16,11 +20,16 @@ import kotlin.random.Random
  * ViewModel backing [CreateRoomScreen].  Parses the YouTube URL the user types,
  * reports validation state in real-time, and produces the session/video IDs
  * required to navigate to the player.
+ *
+ * The user's display name is loaded from [UserPreferencesRepository] on init
+ * and saved back when the room is started.
  */
 @HiltViewModel
 class CreateRoomViewModel
     @Inject
-    constructor() : ViewModel() {
+    constructor(
+        private val userPreferencesRepository: UserPreferencesRepository,
+    ) : ViewModel() {
         private val _uiState =
             MutableStateFlow(
                 CreateRoomUiState(
@@ -28,6 +37,20 @@ class CreateRoomViewModel
                 ),
             )
         val uiState: StateFlow<CreateRoomUiState> = _uiState.asStateFlow()
+
+        init {
+            // Pre-fill the display name field with the value saved from the last session.
+            // Only applied when the field is still blank to avoid clobbering edits already
+            // made by the user before the DataStore read completes.
+            viewModelScope.launch {
+                val savedName = userPreferencesRepository.displayName.first()
+                if (savedName.isNotBlank()) {
+                    _uiState.update { current ->
+                        if (current.displayName.isBlank()) current.copy(displayName = savedName) else current
+                    }
+                }
+            }
+        }
 
         /** Called whenever the URL field text changes.  Re-parses and updates validation. */
         fun onUrlChanged(input: String) {
@@ -47,9 +70,9 @@ class CreateRoomViewModel
         }
 
         /**
-         * Called when the user taps "Start Room".  Generates a new session ID
-         * and flips [CreateRoomUiState.started] so the screen can navigate.
-         * No-op if no valid video ID has been entered.
+         * Called when the user taps "Start Room".  Generates a new session ID,
+         * persists the display name, and flips [CreateRoomUiState.started] so
+         * the screen can navigate.  No-op if no valid video ID has been entered.
          */
         fun onStartRoom() {
             val current = _uiState.value
@@ -59,8 +82,15 @@ class CreateRoomViewModel
             }
             val sessionId = UUID.randomUUID().toString()
             AppLogger.i(TAG, "Starting room $sessionId for video ${current.videoId}")
+            // Sanitise the display name (trim + 50-char cap) to match server behaviour,
+            // then persist it so it is pre-filled next time.
+            val sanitisedName = current.displayName.trim().take(MAX_DISPLAY_NAME_LENGTH)
+            viewModelScope.launch {
+                userPreferencesRepository.saveDisplayName(sanitisedName)
+            }
             _uiState.update {
                 it.copy(
+                    displayName = sanitisedName,
                     started = true,
                     sessionId = sessionId,
                 )
@@ -76,5 +106,6 @@ class CreateRoomViewModel
 
         private companion object {
             const val TAG = "CreateRoomViewModel"
+            const val MAX_DISPLAY_NAME_LENGTH = 50
         }
     }

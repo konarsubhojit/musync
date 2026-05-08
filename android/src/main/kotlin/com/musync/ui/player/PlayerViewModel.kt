@@ -12,6 +12,7 @@ import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
@@ -22,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -39,6 +41,7 @@ class PlayerViewModel
         private val playbackSyncReceiver: PlaybackSyncReceiver,
         private val youTubeSearchRepository: YouTubeSearchRepository,
         private val recentRoomsRepository: RecentRoomsRepository,
+        private val userPreferencesRepository: UserPreferencesRepository,
     ) : ViewModel() {
         companion object {
             /**
@@ -156,31 +159,19 @@ class PlayerViewModel
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
             isHost = deepLinkRoomId == null
 
+            // Generate a stable local user ID for this session.
+            val localUserId = UUID.randomUUID().toString()
+
             if (deepLinkRoomId != null) {
                 // Guest mode: joining a session shared via deep link.
                 roomId = deepLinkRoomId
-                sessionRepository.joinSession(
-                    Session(
-                        sessionId = roomId,
-                        hostId = DEEP_LINK_HOST_ID_PLACEHOLDER,
-                        localUserId = UUID.randomUUID().toString(),
-                    ),
-                )
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = false) }
                 // Guests listen for host play/pause/seek commands.
                 playbackSyncReceiver.startListening()
             } else {
                 // Host mode: generate a new session ID and join as the host so that
                 // join_room / leave_room are emitted via SessionRepositoryImpl.
-                val userId = UUID.randomUUID().toString()
                 roomId = UUID.randomUUID().toString()
-                sessionRepository.joinSession(
-                    Session(
-                        sessionId = roomId,
-                        hostId = userId,
-                        localUserId = userId,
-                    ),
-                )
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
 
@@ -195,6 +186,28 @@ class PlayerViewModel
             // flow to emit.
             if (initialVideoId != null) {
                 _uiState.update { it.copy(videoId = initialVideoId) }
+            }
+
+            // Read the persisted display name and join the session asynchronously.
+            viewModelScope.launch {
+                val displayName = userPreferencesRepository.displayName.first()
+                sessionRepository.joinSession(
+                    if (isHost) {
+                        Session(
+                            sessionId = roomId,
+                            hostId = localUserId,
+                            localUserId = localUserId,
+                            displayName = displayName,
+                        )
+                    } else {
+                        Session(
+                            sessionId = roomId,
+                            hostId = DEEP_LINK_HOST_ID_PLACEHOLDER,
+                            localUserId = localUserId,
+                            displayName = displayName,
+                        )
+                    },
+                )
             }
 
             viewModelScope.launch {
@@ -256,16 +269,11 @@ class PlayerViewModel
                             }
                         }
                         is SyncEvent.PlayNext -> loadNextTrack()
-                        is SyncEvent.MembersSnapshot ->
-                            _uiState.update { it.copy(participantCount = event.count) }
-                        is SyncEvent.PeerJoined -> {
-                            val newCount = _uiState.value.participantCount + 1
-                            showPresenceEvent(PresenceEvent.PeerJoined, newCount)
-                        }
-                        is SyncEvent.PeerLeft -> {
-                            val newCount = (_uiState.value.participantCount - 1).coerceAtLeast(1)
-                            showPresenceEvent(PresenceEvent.PeerLeft, newCount)
-                        }
+                        is SyncEvent.MembersSnapshot -> Unit // count now derived from participants list
+                        is SyncEvent.PeerJoined -> showPresenceEvent(PresenceEvent.PeerJoined)
+                        is SyncEvent.PeerLeft -> showPresenceEvent(PresenceEvent.PeerLeft)
+                        is SyncEvent.ParticipantsUpdated ->
+                            _uiState.update { it.copy(participants = event.participants) }
                         else -> Unit
                     }
                 }
@@ -437,11 +445,17 @@ class PlayerViewModel
             sessionRepository.setAutoApproveQueue(roomId, enabled)
         }
 
-        fun onRequestQueueAdd(trackId: String, trackTitle: String) {
+        fun onRequestQueueAdd(
+            trackId: String,
+            trackTitle: String,
+        ) {
             sessionRepository.requestQueueAdd(roomId, trackId, trackTitle)
         }
 
-        fun onApproveQueueAdd(trackId: String, trackTitle: String) {
+        fun onApproveQueueAdd(
+            trackId: String,
+            trackTitle: String,
+        ) {
             if (!isHost) return
             sessionRepository.approveQueueAdd(roomId, trackId, trackTitle)
             _uiState.update { state ->
@@ -550,15 +564,12 @@ class PlayerViewModel
         }
 
         /**
-         * Updates the participant count and surfaces a transient [PresenceEvent] notification.
+         * Surfaces a transient [PresenceEvent] notification (join/leave snackbar).
          * Cancels any pending reset job so that back-to-back events each get a fresh timer.
          */
-        private fun showPresenceEvent(
-            event: PresenceEvent,
-            newCount: Int,
-        ) {
+        private fun showPresenceEvent(event: PresenceEvent) {
             presenceResetJob?.cancel()
-            _uiState.update { it.copy(participantCount = newCount, presenceEvent = event) }
+            _uiState.update { it.copy(presenceEvent = event) }
             presenceResetJob =
                 viewModelScope.launch {
                     delay(PRESENCE_EVENT_DURATION_MS)
