@@ -136,6 +136,20 @@ class CreateRoomViewModelTest {
         }
 
     @Test
+    fun `saved display name does not overwrite user edits made before DataStore resolves`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("Saved")
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            // User types before DataStore resolves
+            viewModel.onDisplayNameChanged("User Input")
+            advanceUntilIdle() // DataStore resolves after user typed
+            assertEquals("User Input", viewModel.uiState.value.displayName)
+        }
+
+    @Test
     fun `onStartRoom saves the display name to preferences`() =
         runTest {
             val prefs =
@@ -149,5 +163,22 @@ class CreateRoomViewModelTest {
             viewModel.onStartRoom()
             advanceUntilIdle()
             coVerify { prefs.saveDisplayName("Carol") }
+        }
+
+    @Test
+    fun `onStartRoom trims and caps display name to 50 characters before saving`() =
+        runTest {
+            val prefs =
+                mockk<UserPreferencesRepository>(relaxed = true) {
+                    every { displayName } returns flowOf("")
+                    coEvery { saveDisplayName(any()) } returns Unit
+                }
+            val viewModel = CreateRoomViewModel(prefs)
+            viewModel.onUrlChanged("jNQXAC9IVRw")
+            val longName = "A".repeat(60)
+            viewModel.onDisplayNameChanged("  $longName  ")
+            viewModel.onStartRoom()
+            advanceUntilIdle()
+            coVerify { prefs.saveDisplayName("A".repeat(50)) }
         }
 }

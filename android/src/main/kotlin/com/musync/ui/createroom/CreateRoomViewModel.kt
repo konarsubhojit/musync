@@ -40,10 +40,14 @@ class CreateRoomViewModel
 
         init {
             // Pre-fill the display name field with the value saved from the last session.
+            // Only applied when the field is still blank to avoid clobbering edits already
+            // made by the user before the DataStore read completes.
             viewModelScope.launch {
                 val savedName = userPreferencesRepository.displayName.first()
                 if (savedName.isNotBlank()) {
-                    _uiState.update { it.copy(displayName = savedName) }
+                    _uiState.update { current ->
+                        if (current.displayName.isBlank()) current.copy(displayName = savedName) else current
+                    }
                 }
             }
         }
@@ -78,12 +82,15 @@ class CreateRoomViewModel
             }
             val sessionId = UUID.randomUUID().toString()
             AppLogger.i(TAG, "Starting room $sessionId for video ${current.videoId}")
-            // Persist the display name so it is pre-filled next time.
+            // Sanitise the display name (trim + 50-char cap) to match server behaviour,
+            // then persist it so it is pre-filled next time.
+            val sanitisedName = current.displayName.trim().take(MAX_DISPLAY_NAME_LENGTH)
             viewModelScope.launch {
-                userPreferencesRepository.saveDisplayName(current.displayName)
+                userPreferencesRepository.saveDisplayName(sanitisedName)
             }
             _uiState.update {
                 it.copy(
+                    displayName = sanitisedName,
                     started = true,
                     sessionId = sessionId,
                 )
@@ -99,5 +106,6 @@ class CreateRoomViewModel
 
         private companion object {
             const val TAG = "CreateRoomViewModel"
+            const val MAX_DISPLAY_NAME_LENGTH = 50
         }
     }

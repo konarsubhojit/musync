@@ -8,29 +8,41 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -48,6 +60,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,13 +80,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
 import com.musync.R
+import com.musync.data.model.ChatMessage
+import com.musync.data.model.Participant
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
@@ -93,6 +113,22 @@ fun PlayerScreen(
         if (uiState.inviteLinkCopied) {
             snackbarHostState.currentSnackbarData?.dismiss()
             snackbarHostState.showSnackbar(inviteLinkCopiedMessage)
+        }
+    }
+
+    val peerJoinedMessage = stringResource(R.string.player_peer_joined)
+    val peerLeftMessage = stringResource(R.string.player_peer_left)
+    LaunchedEffect(uiState.presenceEvent) {
+        when (uiState.presenceEvent) {
+            PresenceEvent.PeerJoined -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerJoinedMessage)
+            }
+            PresenceEvent.PeerLeft -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(peerLeftMessage)
+            }
+            null -> { /* nothing to show */ }
         }
     }
 
@@ -180,6 +216,9 @@ fun PlayerScreen(
                             isPlaying = state == PlayerConstants.PlayerState.PLAYING,
                             isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
                         )
+                        if (state == PlayerConstants.PlayerState.ENDED) {
+                            viewModel.onTrackEnded()
+                        }
                     },
                     onCurrentSecond = viewModel::onCurrentSecond,
                     onDuration = viewModel::onDurationReceived,
@@ -207,6 +246,7 @@ fun PlayerScreen(
                     playerReady = youTubePlayer != null,
                     currentSecond = uiState.currentSecond,
                     duration = uiState.duration,
+                    canSkip = uiState.isHost && uiState.queue.isNotEmpty(),
                     onPlayPause = {
                         val player = youTubePlayer ?: return@AnimatedOverlayControls
                         viewModel.onControlsInteraction()
@@ -216,6 +256,10 @@ fun PlayerScreen(
                         viewModel.onControlsInteraction()
                         viewModel.onUserSeeked((second * 1000).toLong())
                         youTubePlayer?.seekTo(second)
+                    },
+                    onSkipNext = {
+                        viewModel.onControlsInteraction()
+                        viewModel.onSkipToNext()
                     },
                 )
             }
@@ -246,6 +290,9 @@ fun PlayerScreen(
                         RoomTab(
                             inviteLink = uiState.inviteLink,
                             participants = uiState.participants,
+                            chatMessages = uiState.chatMessages,
+                            chatInput = uiState.chatInput,
+                            typingUsers = uiState.typingUsers,
                             onCopyInvite = {
                                 clipboardManager.setText(AnnotatedString(uiState.inviteLink))
                                 viewModel.onInviteLinkCopied()
@@ -254,8 +301,17 @@ fun PlayerScreen(
                                 clipboardManager.setText(AnnotatedString(uiState.inviteLink))
                                 viewModel.onInviteLinkCopied()
                             },
+                            onChatInputChanged = viewModel::onChatInputChanged,
+                            onChatMessageSend = viewModel::onChatMessageSend,
+                            onReactionSent = viewModel::onReactionSent,
                         )
-                    PlayerTab.Queue -> QueueTab(queue = uiState.queue)
+                    PlayerTab.Queue ->
+                        QueueTab(
+                            queue = uiState.queue,
+                            isHost = uiState.isHost,
+                            onRemoveTrack = viewModel::onRemoveFromQueue,
+                            onMoveItem = viewModel::onMoveQueueItem,
+                        )
                 }
             }
         }
@@ -264,8 +320,13 @@ fun PlayerScreen(
             AddToQueueBottomSheet(
                 input = uiState.addToQueueInput,
                 isError = uiState.addToQueueError,
+                isSearching = uiState.isSearching,
+                searchResults = uiState.searchResults,
+                searchError = uiState.searchError,
                 onInputChanged = viewModel::onAddToQueueInputChanged,
+                onSearch = viewModel::onSearch,
                 onConfirm = viewModel::onAddToQueueConfirm,
+                onSearchResultSelected = viewModel::onSearchResultSelected,
                 onDismiss = viewModel::onAddToQueueDismissed,
             )
         }
@@ -395,8 +456,10 @@ private fun AnimatedOverlayControls(
     playerReady: Boolean,
     currentSecond: Float,
     duration: Float,
+    canSkip: Boolean,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
+    onSkipNext: () -> Unit,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -409,8 +472,10 @@ private fun AnimatedOverlayControls(
             playerReady = playerReady,
             currentSecond = currentSecond,
             duration = duration,
+            canSkip = canSkip,
             onPlayPause = onPlayPause,
             onSeek = onSeek,
+            onSkipNext = onSkipNext,
         )
     }
 }
@@ -422,14 +487,17 @@ private fun PlayerOverlayControls(
     playerReady: Boolean,
     currentSecond: Float,
     duration: Float,
+    canSkip: Boolean,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
+    onSkipNext: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
         // Centred play/pause (or loading) button — YouTube-style.
-        Box(
+        Row(
             modifier = Modifier.align(Alignment.Center),
-            contentAlignment = Alignment.Center,
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!playerReady || isBuffering) {
                 CircularProgressIndicator(
@@ -452,6 +520,24 @@ private fun PlayerOverlayControls(
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )
+                }
+                if (canSkip) {
+                    Spacer(Modifier.size(16.dp))
+                    IconButton(
+                        onClick = onSkipNext,
+                        modifier =
+                            Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f)),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.SkipNext,
+                            contentDescription = stringResource(R.string.player_skip_next),
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
             }
         }
@@ -499,25 +585,40 @@ private fun PlayerOverlayControls(
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 
+/** Quick-reaction emojis shown in the Room tab. */
+private val REACTION_EMOJIS = listOf("🔥", "❤️", "😂", "👏", "😮")
+
 @Composable
 private fun RoomTab(
     inviteLink: String,
-    participants: List<com.musync.data.model.Participant>,
+    participants: List<Participant>,
+    chatMessages: List<ChatMessage>,
+    chatInput: String,
+    typingUsers: Set<String>,
     onCopyInvite: () -> Unit,
     onShareInvite: () -> Unit,
+    onChatInputChanged: (String) -> Unit,
+    onChatMessageSend: () -> Unit,
+    onReactionSent: (String) -> Unit,
 ) {
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        // Invite card
+    val listState = rememberLazyListState()
+
+    // Scroll to the bottom when a new message arrives.
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) {
+            listState.animateScrollToItem(chatMessages.size - 1)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // ── Invite card ───────────────────────────────────────────────────
         if (inviteLink.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -559,22 +660,145 @@ private fun RoomTab(
             }
         }
 
-        // Listeners section
+        // ── Listeners section ─────────────────────────────────────────────
         Text(
             text = stringResource(R.string.player_participants_title),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (participants.isEmpty()) {
+                ParticipantChip(initials = "?", displayName = stringResource(R.string.player_participant_connecting))
+            } else {
+                participants.forEach { participant ->
+                    val name = participant.displayName.ifBlank { stringResource(R.string.player_participant_anonymous) }
+                    ParticipantChip(
+                        initials = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                        displayName = name,
+                    )
+                }
+            }
+        }
 
-        if (participants.isEmpty()) {
-            // Show a placeholder row while the server hasn't responded yet.
-            ParticipantRow(initials = "?", displayName = stringResource(R.string.player_participant_connecting))
-        } else {
-            participants.forEach { participant ->
-                val name = participant.displayName.ifBlank { stringResource(R.string.player_participant_anonymous) }
-                ParticipantRow(
-                    initials = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                    displayName = name,
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+        // ── Reaction buttons ──────────────────────────────────────────────
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            REACTION_EMOJIS.forEach { emoji ->
+                Surface(
+                    onClick = { onReactionSent(emoji) },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.size(40.dp),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier.semantics {
+                                contentDescription = "Send reaction $emoji"
+                            },
+                    ) {
+                        Text(text = emoji, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+        // ── Chat messages ─────────────────────────────────────────────────
+        LazyColumn(
+            state = listState,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            if (chatMessages.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.chat_empty_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(items = chatMessages, key = { it.id }) { message ->
+                ChatMessageRow(message = message)
+            }
+        }
+
+        // ── Typing indicator ──────────────────────────────────────────────
+        if (typingUsers.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.chat_typing_indicator),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+            )
+        }
+
+        // ── Chat input ────────────────────────────────────────────────────
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = chatInput,
+                onValueChange = onChatInputChanged,
+                placeholder = { Text(stringResource(R.string.chat_input_hint)) },
+                singleLine = true,
+                keyboardOptions =
+                    KeyboardOptions(
+                        imeAction = ImeAction.Send,
+                    ),
+                keyboardActions =
+                    KeyboardActions(
+                        onSend = { onChatMessageSend() },
+                    ),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+            )
+            IconButton(
+                onClick = onChatMessageSend,
+                enabled = chatInput.isNotBlank(),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = stringResource(R.string.chat_send_button),
+                    tint =
+                        if (chatInput.isNotBlank()) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                 )
             }
         }
@@ -582,9 +806,58 @@ private fun RoomTab(
 }
 
 @Composable
+private fun ChatMessageRow(message: ChatMessage) {
+    val alignment = if (message.isLocal) Alignment.End else Alignment.Start
+    val bubbleColor =
+        if (message.isLocal) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.surface
+        }
+    val textColor =
+        if (message.isLocal) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = alignment,
+    ) {
+        if (!message.isLocal) {
+            Text(
+                text = message.senderName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+            )
+        }
+        Surface(
+            color = bubbleColor,
+            shape =
+                RoundedCornerShape(
+                    topStart = if (message.isLocal) 16.dp else 4.dp,
+                    topEnd = if (message.isLocal) 4.dp else 16.dp,
+                    bottomStart = 16.dp,
+                    bottomEnd = 16.dp,
+                ),
+            modifier = Modifier.widthIn(max = 280.dp),
+        ) {
+            Text(
+                text = message.text,
+                color = textColor,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun ParticipantRow(
-    initials: String,
-    displayName: String,
+    initial: String,
+    name: String,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -603,14 +876,14 @@ private fun ParticipantRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = initials,
+                    text = initial,
                     color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.Bold,
                 )
             }
             Spacer(Modifier.size(12.dp))
             Text(
-                text = displayName,
+                text = name,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -619,7 +892,53 @@ private fun ParticipantRow(
 }
 
 @Composable
-private fun QueueTab(queue: List<Track>) {
+private fun ParticipantChip(
+    initials: String,
+    displayName: String,
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initials,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueTab(
+    queue: List<Track>,
+    isHost: Boolean,
+    onRemoveTrack: (String) -> Unit,
+    onMoveItem: (Int, Int) -> Unit,
+) {
     if (queue.isEmpty()) {
         Box(
             modifier =
@@ -637,25 +956,42 @@ private fun QueueTab(queue: List<Track>) {
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(items = queue, key = { it.id }) { track ->
-                QueueRow(track = track)
+                val index = queue.indexOf(track)
+                QueueRow(
+                    track = track,
+                    isHost = isHost,
+                    canMoveUp = isHost && index > 0,
+                    canMoveDown = isHost && index < queue.lastIndex,
+                    onMoveUp = { onMoveItem(index, index - 1) },
+                    onMoveDown = { onMoveItem(index, index + 1) },
+                    onRemove = { onRemoveTrack(track.id) },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun QueueRow(track: Track) {
+private fun QueueRow(
+    track: Track,
+    isHost: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -680,12 +1016,64 @@ private fun QueueRow(track: Track) {
                     maxLines = 1,
                 )
             }
-            // Drag handle reserved for future reordering.
-            Icon(
-                imageVector = Icons.Filled.DragHandle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (isHost) {
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = canMoveUp,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = stringResource(R.string.player_move_up),
+                        tint =
+                            if (canMoveUp) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.3f,
+                                )
+                            },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = canMoveDown,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.player_move_down),
+                        tint =
+                            if (canMoveDown) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.3f,
+                                )
+                            },
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = stringResource(R.string.player_remove_from_queue),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            } else {
+                // Guests see a visual drag handle but cannot modify the queue.
+                Icon(
+                    imageVector = Icons.Filled.DragHandle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -697,8 +1085,13 @@ private fun QueueRow(track: Track) {
 private fun AddToQueueBottomSheet(
     input: String,
     isError: Boolean,
+    isSearching: Boolean,
+    searchResults: List<YouTubeSearchResult>,
+    searchError: Boolean,
     onInputChanged: (String) -> Unit,
+    onSearch: () -> Unit,
     onConfirm: () -> Unit,
+    onSearchResultSelected: (YouTubeSearchResult) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -727,6 +1120,17 @@ private fun AddToQueueBottomSheet(
                 isError = isError,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(
+                        onClick = onSearch,
+                        enabled = input.isNotBlank() && !isSearching,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = stringResource(R.string.player_search_youtube),
+                        )
+                    }
+                },
             )
             if (isError) {
                 Text(
@@ -736,6 +1140,46 @@ private fun AddToQueueBottomSheet(
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                 )
             }
+
+            // ── Search results area ─────────────────────────────────────────
+            when {
+                isSearching -> {
+                    Spacer(Modifier.height(16.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+                searchError -> {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.player_search_error),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    )
+                }
+                searchResults.isNotEmpty() -> {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.player_search_results),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        items(searchResults, key = { it.videoId }) { result ->
+                            SearchResultItem(
+                                result = result,
+                                onClick = { onSearchResultSelected(result) },
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
@@ -748,6 +1192,47 @@ private fun AddToQueueBottomSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun SearchResultItem(
+    result: YouTubeSearchResult,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = result.thumbnailUrl,
+            contentDescription = null,
+            modifier =
+                Modifier
+                    .size(72.dp, 54.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+        )
+        Spacer(Modifier.size(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = result.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = result.channelTitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

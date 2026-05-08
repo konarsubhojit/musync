@@ -2,17 +2,22 @@ package com.musync.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.musync.data.remote.RoomStatusChecker
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.logging.AppLogger
 import com.musync.sync.QueueManager
 import com.musync.util.RoomLinkParser
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -21,6 +26,8 @@ class HomeViewModel
     constructor(
         musicRepository: MusicRepository,
         private val queueManager: QueueManager,
+        private val recentRoomsRepository: RecentRoomsRepository,
+        private val roomStatusChecker: RoomStatusChecker,
     ) : ViewModel() {
         private val formStateFlow = MutableStateFlow(HomeUiState())
 
@@ -43,6 +50,7 @@ class HomeViewModel
 
         init {
             queueManager.startListening()
+            loadRecentRoomsAndStatuses()
         }
 
         override fun onCleared() {
@@ -94,6 +102,39 @@ class HomeViewModel
                     joinExpanded = false,
                     joinInput = "",
                 )
+            }
+        }
+
+        /** Clears the full recent-rooms history. */
+        fun onClearHistory() {
+            recentRoomsRepository.clearHistory()
+            formStateFlow.update { it.copy(recentRooms = emptyList(), recentRoomsStatus = emptyMap()) }
+            AppLogger.i(TAG, "Recent rooms history cleared")
+        }
+
+        /**
+         * Loads the persisted recent-rooms list and concurrently fetches the live
+         * status for each room from the server.
+         */
+        private fun loadRecentRoomsAndStatuses() {
+            viewModelScope.launch {
+                val rooms = recentRoomsRepository.getRecentRooms()
+                formStateFlow.update { it.copy(recentRooms = rooms) }
+
+                if (rooms.isEmpty()) return@launch
+
+                // Fetch statuses concurrently — a failed check for one room must
+                // not block the others.
+                val statusMap =
+                    rooms
+                        .map { room ->
+                            async {
+                                room.roomId to roomStatusChecker.getStatus(room.roomId)
+                            }
+                        }.awaitAll()
+                        .toMap()
+
+                formStateFlow.update { it.copy(recentRoomsStatus = statusMap) }
             }
         }
 

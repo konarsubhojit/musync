@@ -1,7 +1,11 @@
 package com.musync.ui.home
 
+import com.musync.data.model.RecentRoom
 import com.musync.data.model.Track
+import com.musync.data.remote.RoomStatus
+import com.musync.data.remote.RoomStatusChecker
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.sync.QueueManager
 import io.mockk.every
 import io.mockk.just
@@ -141,6 +145,48 @@ class HomeViewModelTest {
             assertEquals(listOf(track), state.queue)
         }
 
+    @Test
+    fun `recentRooms from repository appear in uiState`() =
+        runTest {
+            val rooms = listOf(RecentRoom("room-1", "room-1", 1000L))
+            val recentRoomsRepo = fakeRecentRoomsRepo(initialRooms = rooms)
+            val viewModel = newViewModel(recentRoomsRepo = recentRoomsRepo)
+            subscribe(viewModel.uiState)
+            advanceUntilIdle()
+            assertEquals(rooms, viewModel.uiState.value.recentRooms)
+        }
+
+    @Test
+    fun `onClearHistory empties the recent rooms list`() =
+        runTest {
+            val rooms = listOf(RecentRoom("room-1", "room-1", 1000L))
+            val recentRoomsRepo = fakeRecentRoomsRepo(initialRooms = rooms)
+            val viewModel = newViewModel(recentRoomsRepo = recentRoomsRepo)
+            subscribe(viewModel.uiState)
+            advanceUntilIdle()
+            assertEquals(1, viewModel.uiState.value.recentRooms.size)
+
+            viewModel.onClearHistory()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.recentRooms.isEmpty())
+        }
+
+    @Test
+    fun `room statuses are fetched and exposed in uiState`() =
+        runTest {
+            val rooms = listOf(RecentRoom("room-1", "room-1", 1000L))
+            val recentRoomsRepo = fakeRecentRoomsRepo(initialRooms = rooms)
+            val statusChecker =
+                object : RoomStatusChecker {
+                    override suspend fun getStatus(roomId: String) = RoomStatus(active = true, listenerCount = 3)
+                }
+            val viewModel = newViewModel(recentRoomsRepo = recentRoomsRepo, statusChecker = statusChecker)
+            subscribe(viewModel.uiState)
+            advanceUntilIdle()
+            val status = viewModel.uiState.value.recentRoomsStatus["room-1"]
+            assertEquals(RoomStatus(active = true, listenerCount = 3), status)
+        }
+
     // --- Helpers ---
 
     @Suppress("UNUSED_PARAMETER")
@@ -153,7 +199,9 @@ class HomeViewModelTest {
                 every { startListening() } just runs
                 every { stopListening() } just runs
             },
-    ): HomeViewModel = HomeViewModel(repo, queueManager)
+        recentRoomsRepo: RecentRoomsRepository = fakeRecentRoomsRepo(),
+        statusChecker: RoomStatusChecker = fakeStatusChecker(),
+    ): HomeViewModel = HomeViewModel(repo, queueManager, recentRoomsRepo, statusChecker)
 
     private fun fakeRepo(
         initialTrack: Track? = null,
@@ -166,5 +214,27 @@ class HomeViewModelTest {
             override fun updateQueue(tracks: List<Track>) = Unit
 
             override fun addToQueue(track: Track) = Unit
+        }
+
+    private fun fakeRecentRoomsRepo(initialRooms: List<RecentRoom> = emptyList()): RecentRoomsRepository {
+        val rooms = initialRooms.toMutableList()
+        return object : RecentRoomsRepository {
+            override fun getRecentRooms() = rooms.toList()
+
+            override fun addOrUpdateRoom(
+                roomId: String,
+                displayName: String,
+            ) {
+                rooms.removeAll { it.roomId == roomId }
+                rooms.add(0, RecentRoom(roomId, displayName, System.currentTimeMillis()))
+            }
+
+            override fun clearHistory() = rooms.clear()
+        }
+    }
+
+    private fun fakeStatusChecker(): RoomStatusChecker =
+        object : RoomStatusChecker {
+            override suspend fun getStatus(roomId: String): RoomStatus? = null
         }
 }

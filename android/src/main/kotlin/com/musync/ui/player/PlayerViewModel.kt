@@ -4,12 +4,16 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.BuildConfig
+import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
+import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.MusicRepository
+import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.UserPreferencesRepository
+import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -35,6 +39,8 @@ class PlayerViewModel
         private val sessionRepository: SessionRepository,
         private val syncEmitter: SyncEmitter,
         private val playbackSyncReceiver: PlaybackSyncReceiver,
+        private val youTubeSearchRepository: YouTubeSearchRepository,
+        private val recentRoomsRepository: RecentRoomsRepository,
         private val userPreferencesRepository: UserPreferencesRepository,
     ) : ViewModel() {
         companion object {
@@ -58,6 +64,9 @@ class PlayerViewModel
             /** Duration (ms) to show the "link copied" feedback in the UI. */
             internal const val INVITE_COPIED_FEEDBACK_DURATION_MS = 2_000L
 
+            /** Duration (ms) to show a peer-presence (join/leave) notification. */
+            internal const val PRESENCE_EVENT_DURATION_MS = 3_000L
+
             /** Duration (ms) before the playback overlay controls auto-hide after a tap. */
             internal const val CONTROLS_AUTO_HIDE_MS = 3_000L
 
@@ -69,6 +78,25 @@ class PlayerViewModel
 
             /** SavedStateHandle key for the room ID provided via deep link. */
             internal const val ARG_ROOM_ID = "roomId"
+
+            /**
+             * Debounce window (ms) between input changes and sending a TYPING event.
+             * Reduces the number of TYPING socket emissions while the user is typing.
+             */
+            internal const val TYPING_DEBOUNCE_MS = 500L
+
+            /**
+             * Display name used when sending chat messages and typing indicators.
+             * Can later be replaced with a user-configurable name from settings.
+             */
+            internal const val DEFAULT_DISPLAY_NAME = "You"
+
+            /**
+             * Maximum number of chat messages retained in [PlayerUiState.chatMessages].
+             * When the list exceeds this size, the oldest messages are dropped so that
+             * long sessions do not grow memory usage or recomposition cost unboundedly.
+             */
+            internal const val MAX_CHAT_MESSAGES = 200
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -82,6 +110,15 @@ class PlayerViewModel
 
         /** Tracks the active periodic heartbeat emission job. */
         private var heartbeatJob: Job? = null
+
+        /** Debounce job for TYPING socket event emission. */
+        private var typingDebounceJob: Job? = null
+
+        /** Tracks the active job that clears [PlayerUiState.presenceEvent] after a delay. */
+        private var presenceResetJob: Job? = null
+
+        /** Tracks the active YouTube search coroutine so rapid calls cancel stale requests. */
+        private var searchJob: Job? = null
 
         /**
          * `true` only when the local player was most recently in a PLAYING state.
@@ -108,8 +145,15 @@ class PlayerViewModel
         /**
          * `true` when this client is the session host (i.e. no deep-link room ID was provided).
          * Only the host emits PLAY / PAUSE / SEEK / SYNC_HEARTBEAT events to the server.
+         *
+         * This value starts as the client-side determination (whether a deep-link roomId was
+         * provided), and is updated dynamically when a [SyncEvent.HostTransferred] event is
+         * received — allowing the host role to be transferred to any participant at runtime.
          */
-        internal val isHost: Boolean
+        internal var isHost: Boolean
+
+        /** `true` when democratic mode is active (any room member can control playback). */
+        internal var isDemocratic: Boolean = false
 
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
@@ -131,6 +175,12 @@ class PlayerViewModel
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
 
+            // Record this room in the local history so the user can rejoin later.
+            recentRoomsRepository.addOrUpdateRoom(
+                roomId = roomId,
+                displayName = roomId,
+            )
+
             // Seed the videoId immediately when the host supplied one so the
             // YouTube player can start loading without waiting for the track
             // flow to emit.
@@ -138,8 +188,7 @@ class PlayerViewModel
                 _uiState.update { it.copy(videoId = initialVideoId) }
             }
 
-            // Read the persisted display name and join the session.  Done in a
-            // coroutine so the DataStore read is non-blocking.
+            // Read the persisted display name and join the session asynchronously.
             viewModelScope.launch {
                 val displayName = userPreferencesRepository.displayName.first()
                 sessionRepository.joinSession(
@@ -184,12 +233,73 @@ class PlayerViewModel
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
                     when (event) {
-                        is SyncEvent.RoomClosed ->
+                        is SyncEvent.RoomClosed -> {
                             _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        }
+                        is SyncEvent.HostTransferred -> {
+                            isHost = event.isNowHost
+                            _uiState.update { it.copy(isHost = event.isNowHost) }
+                            if (event.isNowHost) {
+                                // Promoted to host: stop receiving remote commands,
+                                // reconcile heartbeat with current playback state.
+                                playbackSyncReceiver.stopListening()
+                                if (_uiState.value.isPlaying) {
+                                    wasPlaying = true
+                                    startHeartbeat()
+                                } else {
+                                    stopHeartbeat()
+                                }
+                            } else {
+                                // Demoted to guest: start receiving commands from the new host.
+                                playbackSyncReceiver.startListening()
+                                stopHeartbeat()
+                                wasPlaying = false
+                            }
+                        }
+                        is SyncEvent.DemocraticModeChanged -> {
+                            isDemocratic = event.enabled
+                            _uiState.update { it.copy(isDemocraticMode = event.enabled) }
+                        }
+                        is SyncEvent.AutoApproveQueueChanged -> {
+                            _uiState.update { it.copy(autoApproveQueue = event.enabled) }
+                        }
+                        is SyncEvent.QueueAddRequest -> {
+                            _uiState.update { state ->
+                                state.copy(pendingQueueRequests = state.pendingQueueRequests + (event.trackId to event.trackTitle))
+                            }
+                        }
+                        is SyncEvent.PlayNext -> loadNextTrack()
+                        is SyncEvent.MembersSnapshot -> Unit // count now derived from participants list
+                        is SyncEvent.PeerJoined -> showPresenceEvent(PresenceEvent.PeerJoined)
+                        is SyncEvent.PeerLeft -> showPresenceEvent(PresenceEvent.PeerLeft)
                         is SyncEvent.ParticipantsUpdated ->
                             _uiState.update { it.copy(participants = event.participants) }
                         else -> Unit
                     }
+                }
+            }
+
+            // Collect incoming chat messages.
+            viewModelScope.launch {
+                sessionRepository.chatMessages.collect { message ->
+                    _uiState.update { state ->
+                        val updated = (state.chatMessages + message).takeLast(MAX_CHAT_MESSAGES)
+                        state.copy(chatMessages = updated)
+                    }
+                }
+            }
+
+            // Collect incoming emoji reactions.
+            viewModelScope.launch {
+                sessionRepository.reactions.collect { emoji ->
+                    _uiState.update { it.copy(pendingReactions = it.pendingReactions + emoji) }
+                }
+            }
+
+            // Mirror typing users from the repository into UI state.
+            viewModelScope.launch {
+                sessionRepository.typingUsers.collect { users ->
+                    _uiState.update { it.copy(typingUsers = users) }
                 }
             }
 
@@ -225,7 +335,7 @@ class PlayerViewModel
             isBuffering: Boolean = false,
         ) {
             _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
-            if (!isHost) return
+            if (!isHost && !isDemocratic) return
 
             val positionMs = (_uiState.value.currentSecond * 1000).toLong()
             when {
@@ -307,8 +417,57 @@ class PlayerViewModel
          * can seek to the same position.  No-op for guest clients.
          */
         fun onUserSeeked(positionMs: Long) {
-            if (!isHost) return
+            if (!isHost && !isDemocratic) return
             syncEmitter.emitSeek(roomId, positionMs)
+        }
+
+        /**
+         * Transfers the host role to the participant identified by [newHostSocketId].
+         *
+         * No-op when the local user is not the current host.  The server validates
+         * the request and broadcasts [com.musync.sync.SocketEvents.HOST_TRANSFERRED]
+         * to all room members on success.
+         *
+         * @param newHostSocketId The socket ID of the room member to promote to host.
+         */
+        fun onTransferHost(newHostSocketId: String) {
+            if (!isHost) return
+            sessionRepository.transferHost(roomId, newHostSocketId)
+        }
+
+        fun onSetDemocraticMode(enabled: Boolean) {
+            if (!isHost) return
+            sessionRepository.setDemocraticMode(roomId, enabled)
+        }
+
+        fun onSetAutoApproveQueue(enabled: Boolean) {
+            if (!isHost) return
+            sessionRepository.setAutoApproveQueue(roomId, enabled)
+        }
+
+        fun onRequestQueueAdd(
+            trackId: String,
+            trackTitle: String,
+        ) {
+            sessionRepository.requestQueueAdd(roomId, trackId, trackTitle)
+        }
+
+        fun onApproveQueueAdd(
+            trackId: String,
+            trackTitle: String,
+        ) {
+            if (!isHost) return
+            sessionRepository.approveQueueAdd(roomId, trackId, trackTitle)
+            _uiState.update { state ->
+                state.copy(pendingQueueRequests = state.pendingQueueRequests.filter { it.first != trackId })
+            }
+        }
+
+        fun onDismissQueueRequest(trackId: String) {
+            if (!isHost) return
+            _uiState.update { state ->
+                state.copy(pendingQueueRequests = state.pendingQueueRequests.filter { it.first != trackId })
+            }
         }
 
         /**
@@ -333,6 +492,60 @@ class PlayerViewModel
             }
         }
 
+        // ------------------------------------------------------------------
+        // Chat
+        // ------------------------------------------------------------------
+
+        /** Updates the chat input field and emits a debounced TYPING event. */
+        fun onChatInputChanged(text: String) {
+            _uiState.update { it.copy(chatInput = text) }
+            if (text.isNotBlank()) {
+                typingDebounceJob?.cancel()
+                typingDebounceJob =
+                    viewModelScope.launch {
+                        delay(TYPING_DEBOUNCE_MS)
+                        sessionRepository.sendTyping(DEFAULT_DISPLAY_NAME)
+                    }
+            } else {
+                // Input cleared — cancel any pending TYPING event to avoid misleading indicators.
+                typingDebounceJob?.cancel()
+            }
+        }
+
+        /** Sends the current chat input as a message and clears the input field. */
+        fun onChatMessageSend() {
+            val text = _uiState.value.chatInput.trim()
+            if (text.isBlank()) return
+            typingDebounceJob?.cancel()
+            sessionRepository.sendChatMessage(text, DEFAULT_DISPLAY_NAME)
+            _uiState.update { it.copy(chatInput = "") }
+        }
+
+        /**
+         * Sends an ephemeral emoji reaction to all other room members.
+         * The emoji is also added locally to [PlayerUiState.pendingReactions] so
+         * the sender sees their own reaction immediately.
+         */
+        fun onReactionSent(emoji: String) {
+            sessionRepository.sendReaction(emoji)
+            _uiState.update { it.copy(pendingReactions = it.pendingReactions + emoji) }
+        }
+
+        /**
+         * Called by the UI once it has consumed (displayed) a pending reaction.
+         * Removes the first occurrence of [emoji] from [PlayerUiState.pendingReactions].
+         */
+        fun onReactionConsumed(emoji: String) {
+            _uiState.update { state ->
+                val updated = state.pendingReactions.toMutableList()
+                val idx = updated.indexOf(emoji)
+                if (idx >= 0) updated.removeAt(idx)
+                state.copy(pendingReactions = updated)
+            }
+        }
+
+        // ------------------------------------------------------------------
+
         private fun startHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob =
@@ -348,6 +561,20 @@ class PlayerViewModel
         private fun stopHeartbeat() {
             heartbeatJob?.cancel()
             heartbeatJob = null
+        }
+
+        /**
+         * Surfaces a transient [PresenceEvent] notification (join/leave snackbar).
+         * Cancels any pending reset job so that back-to-back events each get a fresh timer.
+         */
+        private fun showPresenceEvent(event: PresenceEvent) {
+            presenceResetJob?.cancel()
+            _uiState.update { it.copy(presenceEvent = event) }
+            presenceResetJob =
+                viewModelScope.launch {
+                    delay(PRESENCE_EVENT_DURATION_MS)
+                    _uiState.update { it.copy(presenceEvent = null) }
+                }
         }
 
         private fun scheduleControlsHide() {
@@ -366,13 +593,25 @@ class PlayerViewModel
                     addToQueueSheetVisible = true,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }
 
         /** Dismisses the "Add to queue" bottom sheet. */
         fun onAddToQueueDismissed() {
-            _uiState.update { it.copy(addToQueueSheetVisible = false) }
+            searchJob?.cancel()
+            searchJob = null
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
         }
 
         /** Updates the input field of the bottom sheet. */
@@ -392,6 +631,8 @@ class PlayerViewModel
                 _uiState.update { it.copy(addToQueueError = true) }
                 return
             }
+            searchJob?.cancel()
+            searchJob = null
             musicRepository.addToQueue(
                 Track(
                     id = UUID.randomUUID().toString(),
@@ -406,6 +647,70 @@ class PlayerViewModel
                     addToQueueSheetVisible = false,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
+                )
+            }
+        }
+
+        /**
+         * Launches a YouTube search for the current [PlayerUiState.addToQueueInput].
+         * Cancels any in-flight search before starting a new one so that stale results
+         * from a previous query cannot overwrite newer ones.
+         * Stores the results in [PlayerUiState.searchResults] on success, or sets
+         * [PlayerUiState.searchError] on failure.  No-op when the input is blank.
+         */
+        fun onSearch() {
+            val query = _uiState.value.addToQueueInput.trim()
+            if (query.isEmpty()) return
+            searchJob?.cancel()
+            _uiState.update { it.copy(isSearching = true, searchError = false, searchResults = emptyList()) }
+            searchJob =
+                viewModelScope.launch {
+                    val result = youTubeSearchRepository.search(query)
+                    _uiState.update { state ->
+                        result.fold(
+                            onSuccess = { items ->
+                                state.copy(isSearching = false, searchResults = items, searchError = false)
+                            },
+                            onFailure = {
+                                state.copy(isSearching = false, searchError = true)
+                            },
+                        )
+                    }
+                }
+        }
+
+        /**
+         * Adds the given YouTube search result directly to the queue and closes the
+         * "Add to queue" bottom sheet.
+         *
+         * [Track.durationMs] is set to 0 because the YouTube search API does not
+         * return video duration; the player resolves the real duration on playback
+         * via [PlayerViewModel.onDurationReceived].  This mirrors the behaviour of
+         * the URL-paste flow ([onAddToQueueConfirm]).
+         */
+        fun onSearchResultSelected(result: YouTubeSearchResult) {
+            searchJob?.cancel()
+            searchJob = null
+            musicRepository.addToQueue(
+                Track(
+                    id = UUID.randomUUID().toString(),
+                    title = result.title,
+                    artist = result.channelTitle,
+                    youtubeVideoId = result.videoId,
+                    durationMs = 0L,
+                ),
+            )
+            _uiState.update {
+                it.copy(
+                    addToQueueSheetVisible = false,
+                    addToQueueInput = "",
+                    addToQueueError = false,
+                    searchResults = emptyList(),
+                    isSearching = false,
+                    searchError = false,
                 )
             }
         }
@@ -449,5 +754,65 @@ class PlayerViewModel
          */
         fun onNavigatedBack() {
             _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
+        }
+
+        /**
+         * Called when the YouTube player signals that the current track has ended.
+         * Notifies [SessionRepository] so it can emit [SyncEvent.PlayNext] when the local
+         * user is the session host.  Auto-advance is then handled in the events collector.
+         */
+        fun onTrackEnded() {
+            sessionRepository.onPlayerStateChanged(PlayerState.ENDED)
+        }
+
+        /**
+         * Removes the track identified by [trackId] from the local queue and broadcasts the
+         * updated queue to the room via [SyncEmitter].  No-op for guest clients.
+         */
+        fun onRemoveFromQueue(trackId: String) {
+            if (!isHost) return
+            val updatedQueue = _uiState.value.queue.filter { it.id != trackId }
+            musicRepository.updateQueue(updatedQueue)
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
+        }
+
+        /**
+         * Moves the queue item at [fromIndex] to [toIndex] and broadcasts the updated queue.
+         * No-op for guest clients or when either index is out of bounds.
+         */
+        fun onMoveQueueItem(
+            fromIndex: Int,
+            toIndex: Int,
+        ) {
+            if (!isHost) return
+            val current = _uiState.value.queue.toMutableList()
+            if (fromIndex < 0 || fromIndex >= current.size || toIndex < 0 || toIndex >= current.size) return
+            val item = current.removeAt(fromIndex)
+            current.add(toIndex, item)
+            musicRepository.updateQueue(current)
+            syncEmitter.emitQueueUpdated(roomId, current)
+        }
+
+        /**
+         * Skips the currently playing track and loads the first track from the queue.
+         * No-op for guest clients or when the queue is empty.
+         */
+        fun onSkipToNext() {
+            if (!isHost) return
+            loadNextTrack()
+        }
+
+        /**
+         * Loads and plays the first track in the queue, removes it from the queue, and
+         * broadcasts the updated queue to the room.  No-op when the queue is empty.
+         */
+        private fun loadNextTrack() {
+            val queue = _uiState.value.queue
+            if (queue.isEmpty()) return
+            val nextTrack = queue[0]
+            val updatedQueue = queue.drop(1)
+            musicRepository.updateQueue(updatedQueue)
+            _uiState.update { it.copy(videoId = nextTrack.youtubeVideoId) }
+            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
         }
     }

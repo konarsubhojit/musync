@@ -43,6 +43,68 @@ function createApp(options = {}) {
     res.json({ status: 'ok' });
   });
 
+  // ── YouTube search proxy ──────────────────────────────────────────────────
+  // GET /api/youtube/search?q=<query>
+  // Proxies to the YouTube Data API v3 search endpoint so the API key stays
+  // server-side and is never shipped inside the Android APK.
+  //
+  // Configuration (env vars):
+  //   YOUTUBE_API_KEY   YouTube Data API v3 key (required for this route to work).
+  //                     When unset the route responds 503.
+  //   YOUTUBE_SEARCH_TIMEOUT_MS  Fetch timeout in ms (default: 8000).
+  app.get('/api/youtube/search', async (req, res) => {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'YouTube search not configured' });
+      return;
+    }
+    const q = (req.query.q ?? '').trim();
+    if (!q) {
+      res.status(400).json({ error: 'Missing search query' });
+      return;
+    }
+    if (q.length > 200) {
+      res.status(400).json({ error: 'Search query too long' });
+      return;
+    }
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const url = new URL('https://www.googleapis.com/youtube/v3/search');
+      url.searchParams.set('part', 'snippet');
+      url.searchParams.set('type', 'video');
+      url.searchParams.set('q', q);
+      url.searchParams.set('maxResults', '10');
+      url.searchParams.set('key', apiKey);
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) {
+        res.status(502).json({ error: 'YouTube API error' });
+        return;
+      }
+      const data = await response.json();
+      const items = (data.items ?? []).map((item) => ({
+        videoId: item.id.videoId,
+        title: item.snippet.title,
+        channelTitle: item.snippet.channelTitle,
+        thumbnailUrl:
+          item.snippet.thumbnails?.medium?.url ??
+          item.snippet.thumbnails?.default?.url ??
+          '',
+      }));
+      res.json({ items });
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        res.status(504).json({ error: 'YouTube API request timed out' });
+      } else {
+        console.error('[youtube-search] error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   // ── Android App Links: assetlinks.json ────────────────────────────────────
   // Served at the well-known location Android fetches when verifying
   // `<intent-filter android:autoVerify="true">` links of the form
@@ -135,6 +197,26 @@ function createApp(options = {}) {
     },
   });
 
+  // ── Room status endpoint ──────────────────────────────────────────────────
+  // Returns whether a room is currently active (has connected listeners) and
+  // how many listeners are present.  Used by the Android client to show
+  // "active / N listeners" next to entries in the Recent Rooms list.
+  app.get('/room/:roomId/status', async (req, res) => {
+    const { roomId } = req.params;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(roomId)) {
+      res.status(400).json({ error: 'invalid roomId' });
+      return;
+    }
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      const listenerCount = sockets.length;
+      res.json({ active: listenerCount > 0, listenerCount });
+    } catch (err) {
+      console.error(`[status] fetchSockets failed  room=${roomId}:`, err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
   /**
    * Returns `pos` when it is a finite, non-negative number; otherwise `null`.
    * @param {unknown} pos
@@ -145,21 +227,50 @@ function createApp(options = {}) {
   }
 
   /**
+   * Returns `true` when `socketId` is authorised to send playback commands.
+   * A socket is authorised when either:
+   *  - no room state exists yet (it will become the host on first write), or
+   *  - it is already the stored host for the room.
+   *
+   * @param {string}         socketId
+   * @param {RoomData|null}  existing  - Current room state (may be null).
+   * @returns {boolean}
+   */
+  function isAuthorisedHost(socketId, existing) {
+    return !existing?.hostId || existing.hostId === socketId;
+  }
+
+  /**
+   * Returns `true` when `socketId` is authorised to send playback commands.
+   * Extends `isAuthorisedHost` by also returning true when democratic mode is enabled.
+   *
+   * @param {string}         socketId
+   * @param {RoomData|null}  existing  - Current room state (may be null).
+   * @returns {boolean}
+   */
+  function isAuthorisedPlayback(socketId, existing) {
+    if (existing?.democraticMode === true) return true;
+    return isAuthorisedHost(socketId, existing);
+  }
+
+  /**
    * Persists the given playback state delta for a room and returns the updated
    * RoomData.  Only called when the socket has already verified membership.
    *
    * The `socketId` is stored as `hostId` the first time state is created for a
    * room (i.e. the first socket to trigger a PLAY/PAUSE/SEEK becomes the host).
    *
-   * @param {string}  socketId
-   * @param {string}  roomId
-   * @param {boolean} isPlaying
-   * @param {number}  positionMs
+   * @param {string}       socketId
+   * @param {string}       roomId
+   * @param {boolean}      isPlaying
+   * @param {number}       positionMs
+   * @param {RoomData|null} [existingRoom]  - Already-fetched room state to avoid a
+   *   redundant store read.  When omitted the store is queried.
    * @returns {Promise<RoomData>}
    */
-  async function updateRoomState(socketId, roomId, isPlaying, positionMs) {
+  async function updateRoomState(socketId, roomId, isPlaying, positionMs, existingRoom) {
     try {
-      const existing = await roomStore.getRoom(roomId);
+      const existing = existingRoom !== undefined ? existingRoom : await roomStore.getRoom(roomId);
       const roomData = {
         roomId,
         hostId: existing?.hostId ?? socketId,
@@ -169,6 +280,8 @@ function createApp(options = {}) {
         currentVideo: existing?.currentVideo ?? null,
         queue: existing?.queue ?? [],
         updatedAt: Date.now(),
+        democraticMode: existing?.democraticMode ?? false,
+        autoApproveQueue: existing?.autoApproveQueue ?? true,
       };
       await roomStore.setRoom(roomId, roomData);
       return roomData;
@@ -224,7 +337,7 @@ function createApp(options = {}) {
     }
   }
 
-  // ── Participant name tracking ─────────────────────────────────────────────
+// ── Participant name tracking ─────────────────────────────────────────────
   // Ephemeral in-memory map from socketId → { roomId, displayName }.
   // Used to build the PARTICIPANTS_UPDATED payload broadcast on join/leave.
   /** @type {Map<string, { roomId: string, displayName: string }>} */
@@ -233,19 +346,34 @@ function createApp(options = {}) {
   /**
    * Builds the current participant list for a room and broadcasts
    * `PARTICIPANTS_UPDATED` to every member (including the triggering socket).
+   * Filters out `leavingSocketId` when provided (used in `disconnecting` while
+   * the socket is still technically a member of the room).
    * @param {string} roomId
+   * @param {string|null} [leavingSocketId]
    */
-  async function broadcastParticipants(roomId) {
+  async function broadcastParticipants(roomId, leavingSocketId = null) {
     try {
       const sockets = await io.in(roomId).fetchSockets();
-      const participants = sockets.map((s) => ({
-        socketId: s.id,
-        displayName: participantNames.get(s.id)?.displayName ?? '',
-      }));
+      const participants = sockets
+        .filter((s) => s.id !== leavingSocketId)
+        .map((s) => ({
+          socketId: s.id,
+          displayName: participantNames.get(s.id)?.displayName ?? '',
+        }));
       io.to(roomId).emit('PARTICIPANTS_UPDATED', { participants });
     } catch (err) {
       console.error(`[socket] broadcastParticipants failed room=${roomId}:`, err);
     }
+  }
+
+  /**
+   * Returns a non-empty display name from `raw`, falling back to `'Someone'`
+   * when the value is absent or blank.
+   * @param {unknown} raw
+   * @returns {string}
+   */
+  function sanitiseSenderName(raw) {
+    return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
   }
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
@@ -274,8 +402,13 @@ function createApp(options = {}) {
       broadcastParticipants(roomId);
       if (typeof ack === 'function') {
         try {
-          const roomData = await roomStore.getRoom(roomId);
-          ack({ ok: true, state: roomData ?? null });
+          const [roomData, sockets] = await Promise.all([
+            roomStore.getRoom(roomId),
+            io.in(roomId).fetchSockets(),
+          ]);
+          // Include socketId so the client can compare against state.hostId
+          // to determine its role (e.g. after a host transfer).
+          ack({ ok: true, state: roomData ?? null, memberCount: sockets.length, socketId: socket.id });
         } catch (err) {
           console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
           ack({ error: 'failed to load room state' });
@@ -365,6 +498,8 @@ function createApp(options = {}) {
           currentVideo: null,
           queue: [],
           updatedAt: Date.now(),
+          democraticMode: false,
+          autoApproveQueue: true,
         };
         await roomStore.setRoom(roomId, {
           ...base,
@@ -383,6 +518,8 @@ function createApp(options = {}) {
     // ── PLAY ───────────────────────────────────────────────────────────────
     // Tells every other room member to start playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit PLAY; events from non-host sockets are silently
+    // dropped.  If no room state exists yet, the sender becomes the host.
     socket.on('PLAY', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -390,7 +527,9 @@ function createApp(options = {}) {
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
       try {
-        const roomData = await updateRoomState(socket.id, roomId, true, pos);
+        const existing = await roomStore.getRoom(roomId);
+        if (!isAuthorisedPlayback(socket.id, existing)) return;
+        const roomData = await updateRoomState(socket.id, roomId, true, pos, existing);
         socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
       } catch (err) {
         console.error(`[socket] PLAY failed  id=${socket.id}  room=${roomId}:`, err);
@@ -400,6 +539,7 @@ function createApp(options = {}) {
     // ── PAUSE ──────────────────────────────────────────────────────────────
     // Tells every other room member to pause playback at the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit PAUSE.
     socket.on('PAUSE', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -407,7 +547,9 @@ function createApp(options = {}) {
       const pos = validPositionMs(positionMs);
       if (pos === null) return;
       try {
-        const roomData = await updateRoomState(socket.id, roomId, false, pos);
+        const existing = await roomStore.getRoom(roomId);
+        if (!isAuthorisedPlayback(socket.id, existing)) return;
+        const roomData = await updateRoomState(socket.id, roomId, false, pos, existing);
         socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
       } catch (err) {
         console.error(`[socket] PAUSE failed  id=${socket.id}  room=${roomId}:`, err);
@@ -417,6 +559,7 @@ function createApp(options = {}) {
     // ── SEEK ───────────────────────────────────────────────────────────────
     // Tells every other room member to seek to the given position.
     // Expected payload: { roomId: string, positionMs: number }
+    // Only the room host may emit SEEK.
     socket.on('SEEK', async (payload) => {
       const { roomId, positionMs } = payload ?? {};
       if (typeof roomId !== 'string' || roomId.trim() === '') return;
@@ -427,15 +570,199 @@ function createApp(options = {}) {
         // Preserve the current isPlaying flag; default to false (paused) when
         // no prior PLAY/PAUSE event has established room state yet.
         const existing = await roomStore.getRoom(roomId);
+        if (!isAuthorisedPlayback(socket.id, existing)) return;
         const isPlaying = existing?.isPlaying ?? false;
-        const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos);
+        const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos, existing);
         socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
       } catch (err) {
         console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
       }
     });
 
-    // ── disconnecting ──────────────────────────────────────────────────────
+    // ── TRANSFER_HOST ───────────────────────────────────────────────────────
+    // Allows the current host to hand off control to another room member.
+    // Expected payload: { roomId: string, newHostSocketId: string }
+    // After a successful transfer the server broadcasts HOST_TRANSFERRED to all
+    // room members (including both the old and new hosts) so clients can update
+    // their local state accordingly.
+    socket.on('TRANSFER_HOST', async (payload) => {
+      const { roomId, newHostSocketId } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof newHostSocketId !== 'string' || newHostSocketId.trim() === '') return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        if (!existing) return;
+        // Only the current host can transfer control.
+        if (existing.hostId !== socket.id) return;
+        // Verify the new host is actually in the room.
+        const sockets = await io.in(roomId).fetchSockets();
+        if (!sockets.some((s) => s.id === newHostSocketId)) return;
+        await roomStore.setRoom(roomId, { ...existing, hostId: newHostSocketId, updatedAt: Date.now() });
+        io.to(roomId).emit('HOST_TRANSFERRED', { newHostSocketId });
+        console.log(`[socket] TRANSFER_HOST  from=${socket.id}  to=${newHostSocketId}  room=${roomId}`);
+      } catch (err) {
+        console.error(`[socket] TRANSFER_HOST failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
+
+    // ── CHAT_MESSAGE ───────────────────────────────────────────────────────
+    // Relays a text message from one room member to all other members.
+    // Expected payload: { roomId: string, text: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('CHAT_MESSAGE', (payload) => {
+      const { roomId, text, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof text !== 'string' || text.trim() === '') return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('CHAT_MESSAGE', {
+        senderId: socket.id,
+        senderName: name,
+        text: text.trim(),
+      });
+    });
+
+    // ── REACTION ───────────────────────────────────────────────────────────
+    // Relays an ephemeral emoji reaction to all other members of the room.
+    // Expected payload: { roomId: string, emoji: string }
+    socket.on('REACTION', (payload) => {
+      const { roomId, emoji } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof emoji !== 'string' || emoji.trim() === '') return;
+      socket.to(roomId).emit('REACTION', { emoji: emoji.trim() });
+    });
+
+    // ── TYPING ─────────────────────────────────────────────────────────────
+    // Notifies other room members that a participant is composing a message.
+    // Expected payload: { roomId: string, senderName: string }
+    // Note: senderId is derived from socket.id to prevent impersonation.
+    socket.on('TYPING', (payload) => {
+      const { roomId, senderName } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      const name = sanitiseSenderName(senderName);
+      socket.to(roomId).emit('TYPING', { senderId: socket.id, senderName: name });
+    });
+
+    // ── SET_DEMOCRATIC_MODE ────────────────────────────────────────────────
+    // Allows the host to enable or disable democratic mode for the room.
+    // When enabled, any room member may send PLAY/PAUSE/SEEK commands.
+    // Expected payload: { roomId: string, enabled: boolean }
+    socket.on('SET_DEMOCRATIC_MODE', async (payload) => {
+      const { roomId, enabled } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof enabled !== 'boolean') return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        if (!existing) return;
+        if (existing.hostId !== socket.id) return;
+        await roomStore.setRoom(roomId, { ...existing, democraticMode: enabled, updatedAt: Date.now() });
+        io.to(roomId).emit('DEMOCRATIC_MODE_CHANGED', { enabled });
+      } catch (err) {
+        console.error(`[socket] SET_DEMOCRATIC_MODE failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
+
+    // ── SET_AUTO_APPROVE_QUEUE ─────────────────────────────────────────────
+    // Allows the host to enable or disable auto-approval for guest queue requests.
+    // Expected payload: { roomId: string, enabled: boolean }
+    socket.on('SET_AUTO_APPROVE_QUEUE', async (payload) => {
+      const { roomId, enabled } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (typeof enabled !== 'boolean') return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        if (!existing) return;
+        if (existing.hostId !== socket.id) return;
+        await roomStore.setRoom(roomId, { ...existing, autoApproveQueue: enabled, updatedAt: Date.now() });
+        io.to(roomId).emit('AUTO_APPROVE_QUEUE_CHANGED', { enabled });
+      } catch (err) {
+        console.error(`[socket] SET_AUTO_APPROVE_QUEUE failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
+
+    // ── REQUEST_QUEUE_ADD ──────────────────────────────────────────────────
+    // Allows a guest to request adding a track to the queue.
+    // When autoApproveQueue=true the track is added immediately and QUEUE_UPDATED
+    // is broadcast.  When autoApproveQueue=false a QUEUE_ADD_REQUEST is sent to
+    // the host socket only for manual approval.
+    // Expected payload: { roomId: string, track: { id: string, title: string } }
+    socket.on('REQUEST_QUEUE_ADD', async (payload) => {
+      const { roomId, track } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (!isVideoRef(track)) return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        const autoApprove = existing?.autoApproveQueue !== false; // default true
+        if (autoApprove) {
+          // Auto-approve: add to queue and broadcast.
+          const base = existing ?? {
+            roomId,
+            hostId: null,
+            playbackState: 'PAUSED',
+            isPlaying: false,
+            positionMs: 0,
+            currentVideo: null,
+            queue: [],
+            updatedAt: Date.now(),
+            democraticMode: false,
+            autoApproveQueue: true,
+          };
+          const normalized = { id: track.id.trim(), title: track.title.trim() };
+          const updatedQueue = [...(base.queue ?? []), normalized];
+          await roomStore.setRoom(roomId, {
+            ...base,
+            queue: updatedQueue,
+            currentVideo: base.currentVideo ?? normalized,
+            updatedAt: Date.now(),
+          });
+          io.to(roomId).emit('QUEUE_UPDATED', updatedQueue);
+        } else {
+          // Manual approval: forward to host only.
+          const hostId = existing?.hostId;
+          if (!hostId) return;
+          const hostSockets = await io.in(roomId).fetchSockets();
+          const hostSocket = hostSockets.find((s) => s.id === hostId);
+          if (hostSocket) {
+            hostSocket.emit('QUEUE_ADD_REQUEST', { id: track.id.trim(), title: track.title.trim() });
+          }
+        }
+      } catch (err) {
+        console.error(`[socket] REQUEST_QUEUE_ADD failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
+
+    // ── APPROVE_QUEUE_ADD ──────────────────────────────────────────────────
+    // Allows the host to approve a guest's queue addition request.
+    // The track is added to the queue and QUEUE_UPDATED is broadcast to all members.
+    // Expected payload: { roomId: string, track: { id: string, title: string } }
+    socket.on('APPROVE_QUEUE_ADD', async (payload) => {
+      const { roomId, track } = payload ?? {};
+      if (typeof roomId !== 'string' || roomId.trim() === '') return;
+      if (!socket.rooms.has(roomId)) return;
+      if (!isVideoRef(track)) return;
+      try {
+        const existing = await roomStore.getRoom(roomId);
+        if (!existing) return;
+        if (existing.hostId !== socket.id) return;
+        const normalized = { id: track.id.trim(), title: track.title.trim() };
+        const updatedQueue = [...(existing.queue ?? []), normalized];
+        await roomStore.setRoom(roomId, {
+          ...existing,
+          queue: updatedQueue,
+          currentVideo: existing.currentVideo ?? normalized,
+          updatedAt: Date.now(),
+        });
+        io.to(roomId).emit('QUEUE_UPDATED', updatedQueue);
+      } catch (err) {
+        console.error(`[socket] APPROVE_QUEUE_ADD failed  id=${socket.id}  room=${roomId}:`, err);
+      }
+    });
     // Fires while the socket is still a member of its rooms, so we can
     // clean up state for any room that becomes empty as a result.
     socket.on('disconnecting', () => {
@@ -446,8 +773,10 @@ function createApp(options = {}) {
         cleanupRoomState(roomId, socket.id);
         // Remove participant from the tracking map and broadcast the updated
         // list to the remaining members before the socket fully leaves.
+        // Pass socket.id as leavingSocketId so the ghost is excluded from the
+        // broadcast even though the socket is still in the room at this point.
         participantNames.delete(socket.id);
-        broadcastParticipants(roomId);
+        broadcastParticipants(roomId, socket.id);
       }
     });
 

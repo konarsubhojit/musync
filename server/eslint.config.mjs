@@ -14,6 +14,12 @@ export default [
         __filename: 'readonly',
         process: 'readonly',
         console: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+        AbortController: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        parseInt: 'readonly',
       },
     },
     rules: {
