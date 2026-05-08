@@ -12,14 +12,16 @@ const ROOM_TTL_SECONDS = 14400;
 
 /**
  * @typedef {object} RoomData
- * @property {string}               roomId        - The room identifier.
- * @property {string|null}          hostId        - Socket ID of the room host.
- * @property {'PLAYING'|'PAUSED'}   playbackState - Current playback state.
- * @property {boolean}              isPlaying     - Convenience alias derived from playbackState.
- * @property {number}               positionMs    - Last known playback position (ms).
- * @property {VideoRef|null}        currentVideo  - Currently playing video, or null.
- * @property {VideoRef[]}           queue         - Upcoming video queue.
- * @property {number}               updatedAt     - Wall-clock timestamp of last update (ms).
+ * @property {string}               roomId           - The room identifier.
+ * @property {string|null}          hostId           - Socket ID of the room host.
+ * @property {'PLAYING'|'PAUSED'}   playbackState    - Current playback state.
+ * @property {boolean}              isPlaying        - Convenience alias derived from playbackState.
+ * @property {number}               positionMs       - Last known playback position (ms).
+ * @property {VideoRef|null}        currentVideo     - Currently playing video, or null.
+ * @property {VideoRef[]}           queue            - Upcoming video queue.
+ * @property {number}               updatedAt        - Wall-clock timestamp of last update (ms).
+ * @property {boolean}              democraticMode   - When true, any member can control playback.
+ * @property {boolean}              autoApproveQueue - When true, guest queue requests are auto-approved.
  */
 
 // ── Schema validation ─────────────────────────────────────────────────────────
@@ -95,7 +97,18 @@ function validateRoomData(data) {
     throw new TypeError('RoomData.updatedAt must be a non-negative finite number');
   }
 
-  return /** @type {RoomData} */ (data);
+  const democraticMode = data.democraticMode !== undefined ? data.democraticMode : false;
+  const autoApproveQueue = data.autoApproveQueue !== undefined ? data.autoApproveQueue : true;
+
+  if (typeof democraticMode !== 'boolean') {
+    throw new TypeError('RoomData.democraticMode must be a boolean');
+  }
+  if (typeof autoApproveQueue !== 'boolean') {
+    throw new TypeError('RoomData.autoApproveQueue must be a boolean');
+  }
+
+  // Attach defaults to the original object so reference equality is preserved.
+  return /** @type {RoomData} */ (Object.assign(data, { democraticMode, autoApproveQueue }));
 }
 
 // ── Store factory ─────────────────────────────────────────────────────────────

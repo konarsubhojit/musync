@@ -807,89 +807,281 @@ describe('MuSync server', () => {
     });
   });
 
-  // ── CHAT_MESSAGE ──────────────────────────────────────────────────────────
-  describe('CHAT_MESSAGE', () => {
-    it('relays a chat message to other room members with socket.id as senderId', async () => {
-      const [alice, bob] = await Promise.all([connect(), connect()]);
-      await joinRoom(alice, 'room-chat-1');
-      await joinRoom(bob, 'room-chat-1');
+  // ── host permissions ─────────────────────────────────────────────────────
+  describe('host permissions', () => {
+    it('does not relay PLAY from a guest when a host is already established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
 
-      const bobReceived = once(bob, 'CHAT_MESSAGE');
-      alice.emit('CHAT_MESSAGE', {
-        roomId: 'room-chat-1',
-        text: 'Hello!',
-        senderName: 'Alice',
-      });
+      await joinRoom(alice, 'room-host-play');
+      await joinRoom(bob, 'room-host-play');
+      await joinRoom(carol, 'room-host-play');
 
-      const payload = await bobReceived;
-      // The server derives senderId from socket.id, not the client payload.
-      expect(payload).toMatchObject({
-        senderId: alice.id,
-        senderName: 'Alice',
-        text: 'Hello!',
-      });
+      // Alice sends PLAY first — she becomes the host
+      alice.emit('PLAY', { roomId: 'room-host-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
 
-      alice.disconnect();
-      bob.disconnect();
-    });
-
-    it('does not echo the message back to the sender', async () => {
-      const [alice, bob] = await Promise.all([connect(), connect()]);
-      await joinRoom(alice, 'room-chat-noecho');
-      await joinRoom(bob, 'room-chat-noecho');
-
-      let aliceReceived = false;
-      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
-      alice.emit('CHAT_MESSAGE', {
-        roomId: 'room-chat-noecho',
-        text: 'Hi',
-        senderName: 'Alice',
-      });
+      // Bob (a non-host) tries to send PLAY — must be silently dropped
+      let received = false;
+      carol.on('PLAY', () => { received = true; });
+      bob.emit('PLAY', { roomId: 'room-host-play', positionMs: 2000 });
 
       await new Promise((r) => setTimeout(r, 100));
-      expect(aliceReceived).toBe(false);
+      expect(received).toBe(false);
 
       alice.disconnect();
       bob.disconnect();
+      carol.disconnect();
     });
 
-    it('ignores a message with blank text', async () => {
-      const [alice, bob] = await Promise.all([connect(), connect()]);
-      await joinRoom(alice, 'room-chat-blank');
-      await joinRoom(bob, 'room-chat-blank');
+    it('does not relay PAUSE from a guest when a host is established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
 
-      let bobReceived = false;
-      bob.on('CHAT_MESSAGE', () => { bobReceived = true; });
-      alice.emit('CHAT_MESSAGE', {
-        roomId: 'room-chat-blank',
-        text: '   ',
-        senderName: 'Alice',
-      });
+      await joinRoom(alice, 'room-host-pause');
+      await joinRoom(bob, 'room-host-pause');
+      await joinRoom(carol, 'room-host-pause');
+
+      alice.emit('PLAY', { roomId: 'room-host-pause', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      carol.on('PAUSE', () => { received = true; });
+      bob.emit('PAUSE', { roomId: 'room-host-pause', positionMs: 1000 });
 
       await new Promise((r) => setTimeout(r, 100));
-      expect(bobReceived).toBe(false);
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('does not relay SEEK from a guest when a host is established', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-seek');
+      await joinRoom(bob, 'room-host-seek');
+      await joinRoom(carol, 'room-host-seek');
+
+      alice.emit('PLAY', { roomId: 'room-host-seek', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      carol.on('SEEK', () => { received = true; });
+      bob.emit('SEEK', { roomId: 'room-host-seek', positionMs: 5000 });
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('guest PLAY does not update room state', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-play-state');
+      await joinRoom(bob, 'room-host-play-state');
+
+      // Alice (host) plays at 1000ms
+      alice.emit('PLAY', { roomId: 'room-host-play-state', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Bob (guest) attempts to play at a different position — must be ignored
+      bob.emit('PLAY', { roomId: 'room-host-play-state', positionMs: 9999 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-host-play-state');
+      // State must reflect Alice's original play, not Bob's attempt
+      expect(ack.state).toMatchObject({ positionMs: 1000, hostId: alice.id });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('allows host to PLAY, PAUSE, and SEEK in sequence', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-host-sequence');
+      await joinRoom(bob, 'room-host-sequence');
+
+      const playP = once(bob, 'PLAY');
+      alice.emit('PLAY', { roomId: 'room-host-sequence', positionMs: 0 });
+      await playP;
+
+      const pauseP = once(bob, 'PAUSE');
+      alice.emit('PAUSE', { roomId: 'room-host-sequence', positionMs: 5000 });
+      await pauseP;
+
+      const seekP = once(bob, 'SEEK');
+      alice.emit('SEEK', { roomId: 'room-host-sequence', positionMs: 30000 });
+      await seekP;
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── TRANSFER_HOST ─────────────────────────────────────────────────────────
+  describe('TRANSFER_HOST', () => {
+    it('updates hostId and broadcasts HOST_TRANSFERRED to all members', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-1');
+      await joinRoom(bob, 'room-transfer-1');
+      await joinRoom(carol, 'room-transfer-1');
+
+      // Alice becomes host
+      alice.emit('PLAY', { roomId: 'room-transfer-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const aliceTransferred = once(alice, 'HOST_TRANSFERRED');
+      const bobTransferred = once(bob, 'HOST_TRANSFERRED');
+      const carolTransferred = once(carol, 'HOST_TRANSFERRED');
+
+      alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-1', newHostSocketId: bob.id });
+
+      const [alicePayload, bobPayload, carolPayload] = await Promise.all([
+        aliceTransferred,
+        bobTransferred,
+        carolTransferred,
+      ]);
+
+      expect(alicePayload).toMatchObject({ newHostSocketId: bob.id });
+      expect(bobPayload).toMatchObject({ newHostSocketId: bob.id });
+      expect(carolPayload).toMatchObject({ newHostSocketId: bob.id });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('updates room state hostId after transfer', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-state');
+      await joinRoom(bob, 'room-transfer-state');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-state', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      await new Promise((resolve) => {
+        alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-state', newHostSocketId: bob.id });
+        bob.once('HOST_TRANSFERRED', resolve);
+      });
+
+      const carol = await connect();
+      const ack = await joinRoom(carol, 'room-transfer-state');
+      expect(ack.state.hostId).toBe(bob.id);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('new host can PLAY after transfer; old host cannot', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-play');
+      await joinRoom(bob, 'room-transfer-play');
+      await joinRoom(carol, 'room-transfer-play');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Transfer host from alice to bob
+      await new Promise((resolve) => {
+        alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-play', newHostSocketId: bob.id });
+        bob.once('HOST_TRANSFERRED', resolve);
+      });
+
+      // Alice (former host) tries to PLAY — should be rejected
+      let alicePlayReceived = false;
+      carol.on('PLAY', () => { alicePlayReceived = true; });
+      alice.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 9000 });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(alicePlayReceived).toBe(false);
+
+      // Bob (new host) can PLAY
+      const bobPlayReceived = once(carol, 'PLAY');
+      bob.emit('PLAY', { roomId: 'room-transfer-play', positionMs: 500 });
+      const payload = await bobPlayReceived;
+      expect(payload).toMatchObject({ positionMs: 500 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('ignores TRANSFER_HOST from a non-host socket', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-nonhost');
+      await joinRoom(bob, 'room-transfer-nonhost');
+      await joinRoom(carol, 'room-transfer-nonhost');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-nonhost', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let transferReceived = false;
+      alice.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      // Bob (non-host) tries to transfer to carol — must be ignored
+      bob.emit('TRANSFER_HOST', { roomId: 'room-transfer-nonhost', newHostSocketId: carol.id });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(transferReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('ignores TRANSFER_HOST when newHostSocketId is not in the room', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+
+      await joinRoom(alice, 'room-transfer-absent');
+      await joinRoom(bob, 'room-transfer-absent');
+
+      alice.emit('PLAY', { roomId: 'room-transfer-absent', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let transferReceived = false;
+      bob.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      // 'ghost-socket-id' is not in the room
+      alice.emit('TRANSFER_HOST', { roomId: 'room-transfer-absent', newHostSocketId: 'ghost-socket-id' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(transferReceived).toBe(false);
 
       alice.disconnect();
       bob.disconnect();
     });
 
-    it('ignores a message from a socket not in the room', async () => {
+    it('ignores TRANSFER_HOST from a non-member socket', async () => {
       const [alice, intruder] = await Promise.all([connect(), connect()]);
-      await joinRoom(alice, 'room-chat-nonmember');
 
-      let aliceReceived = false;
-      alice.on('CHAT_MESSAGE', () => { aliceReceived = true; });
-      intruder.emit('CHAT_MESSAGE', {
-        roomId: 'room-chat-nonmember',
-        text: 'Sneaky',
-        senderName: 'Intruder',
-      });
+      await joinRoom(alice, 'room-transfer-intruder');
+      alice.emit('PLAY', { roomId: 'room-transfer-intruder', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
 
+      let transferReceived = false;
+      alice.on('HOST_TRANSFERRED', () => { transferReceived = true; });
+
+      intruder.emit('TRANSFER_HOST', { roomId: 'room-transfer-intruder', newHostSocketId: alice.id });
       await new Promise((r) => setTimeout(r, 100));
-      expect(aliceReceived).toBe(false);
+      expect(transferReceived).toBe(false);
 
       alice.disconnect();
       intruder.disconnect();
+    });
+
+    it('join_room ack includes socketId', async () => {
+      const alice = await connect();
+      const ack = await joinRoom(alice, 'room-socketid');
+      expect(ack.socketId).toBe(alice.id);
+      alice.disconnect();
     });
 
     it('uses "Someone" as senderName when none is provided', async () => {
@@ -1028,6 +1220,264 @@ describe('MuSync server', () => {
 
       const payload = await bobReceived;
       expect(payload.senderName).toBe('Someone');
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── SET_DEMOCRATIC_MODE / DEMOCRATIC_MODE_CHANGED ─────────────────────────
+  describe('SET_DEMOCRATIC_MODE / DEMOCRATIC_MODE_CHANGED', () => {
+    it('host can enable democratic mode; broadcasts to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-1');
+      await joinRoom(bob, 'room-democratic-1');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'DEMOCRATIC_MODE_CHANGED');
+      const aliceReceived = once(alice, 'DEMOCRATIC_MODE_CHANGED');
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-1', enabled: true });
+
+      const [alicePayload, bobPayload] = await Promise.all([aliceReceived, bobReceived]);
+      expect(alicePayload).toMatchObject({ enabled: true });
+      expect(bobPayload).toMatchObject({ enabled: true });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('host can disable democratic mode', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-2');
+      await joinRoom(bob, 'room-democratic-2');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-2', enabled: true });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'DEMOCRATIC_MODE_CHANGED');
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-2', enabled: false });
+
+      const payload = await bobReceived;
+      expect(payload).toMatchObject({ enabled: false });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host cannot set democratic mode', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-3');
+      await joinRoom(bob, 'room-democratic-3');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-3', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('DEMOCRATIC_MODE_CHANGED', () => { received = true; });
+      bob.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-3', enabled: true });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── PLAY/PAUSE/SEEK in democratic mode ────────────────────────────────────
+  describe('PLAY/PAUSE/SEEK in democratic mode', () => {
+    it('guest can send PLAY when democraticMode=true', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-play');
+      await joinRoom(bob, 'room-democratic-play');
+      await joinRoom(carol, 'room-democratic-play');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-play', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Enable democratic mode
+      await new Promise((resolve) => {
+        alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-play', enabled: true });
+        bob.once('DEMOCRATIC_MODE_CHANGED', resolve);
+      });
+
+      // Bob (guest) can now send PLAY
+      const carolReceived = once(carol, 'PLAY');
+      bob.emit('PLAY', { roomId: 'room-democratic-play', positionMs: 5000 });
+      const payload = await carolReceived;
+      expect(payload).toMatchObject({ positionMs: 5000 });
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+
+    it('non-members still blocked from PLAY even in democratic mode', async () => {
+      const [alice, intruder] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-democratic-nonmember');
+
+      alice.emit('PLAY', { roomId: 'room-democratic-nonmember', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      alice.emit('SET_DEMOCRATIC_MODE', { roomId: 'room-democratic-nonmember', enabled: true });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('PLAY', () => { received = true; });
+      intruder.emit('PLAY', { roomId: 'room-democratic-nonmember', positionMs: 1000 });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      intruder.disconnect();
+    });
+  });
+
+  // ── SET_AUTO_APPROVE_QUEUE / AUTO_APPROVE_QUEUE_CHANGED ───────────────────
+  describe('SET_AUTO_APPROVE_QUEUE / AUTO_APPROVE_QUEUE_CHANGED', () => {
+    it('host can disable auto-approve; broadcasts to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-autoapprove-1');
+      await joinRoom(bob, 'room-autoapprove-1');
+
+      alice.emit('PLAY', { roomId: 'room-autoapprove-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'AUTO_APPROVE_QUEUE_CHANGED');
+      const aliceReceived = once(alice, 'AUTO_APPROVE_QUEUE_CHANGED');
+      alice.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-autoapprove-1', enabled: false });
+
+      const [alicePayload, bobPayload] = await Promise.all([aliceReceived, bobReceived]);
+      expect(alicePayload).toMatchObject({ enabled: false });
+      expect(bobPayload).toMatchObject({ enabled: false });
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host cannot set auto-approve', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-autoapprove-2');
+      await joinRoom(bob, 'room-autoapprove-2');
+
+      alice.emit('PLAY', { roomId: 'room-autoapprove-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('AUTO_APPROVE_QUEUE_CHANGED', () => { received = true; });
+      bob.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-autoapprove-2', enabled: false });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+  });
+
+  // ── REQUEST_QUEUE_ADD ─────────────────────────────────────────────────────
+  describe('REQUEST_QUEUE_ADD', () => {
+    it('auto-approves and broadcasts QUEUE_UPDATED when autoApproveQueue=true', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-queueadd-auto');
+      await joinRoom(bob, 'room-queueadd-auto');
+
+      alice.emit('PLAY', { roomId: 'room-queueadd-auto', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const aliceReceived = once(alice, 'QUEUE_UPDATED');
+      bob.emit('REQUEST_QUEUE_ADD', {
+        roomId: 'room-queueadd-auto',
+        track: { id: 'track-1', title: 'My Song' },
+      });
+
+      const queue = await aliceReceived;
+      expect(Array.isArray(queue)).toBe(true);
+      expect(queue.some((t) => t.id === 'track-1')).toBe(true);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('sends QUEUE_ADD_REQUEST to host only when autoApproveQueue=false', async () => {
+      const [alice, bob, carol] = await Promise.all([connect(), connect(), connect()]);
+      await joinRoom(alice, 'room-queueadd-manual');
+      await joinRoom(bob, 'room-queueadd-manual');
+      await joinRoom(carol, 'room-queueadd-manual');
+
+      alice.emit('PLAY', { roomId: 'room-queueadd-manual', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Disable auto-approve
+      await new Promise((resolve) => {
+        alice.emit('SET_AUTO_APPROVE_QUEUE', { roomId: 'room-queueadd-manual', enabled: false });
+        bob.once('AUTO_APPROVE_QUEUE_CHANGED', resolve);
+      });
+
+      const aliceRequest = once(alice, 'QUEUE_ADD_REQUEST');
+      let carolReceived = false;
+      carol.on('QUEUE_ADD_REQUEST', () => { carolReceived = true; });
+
+      bob.emit('REQUEST_QUEUE_ADD', {
+        roomId: 'room-queueadd-manual',
+        track: { id: 'track-2', title: 'Another Song' },
+      });
+
+      const payload = await aliceRequest;
+      expect(payload).toMatchObject({ id: 'track-2', title: 'Another Song' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(carolReceived).toBe(false);
+
+      alice.disconnect();
+      bob.disconnect();
+      carol.disconnect();
+    });
+  });
+
+  // ── APPROVE_QUEUE_ADD ─────────────────────────────────────────────────────
+  describe('APPROVE_QUEUE_ADD', () => {
+    it('host approves and QUEUE_UPDATED is broadcast to all members', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-approve-1');
+      await joinRoom(bob, 'room-approve-1');
+
+      alice.emit('PLAY', { roomId: 'room-approve-1', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const bobReceived = once(bob, 'QUEUE_UPDATED');
+      const aliceReceived = once(alice, 'QUEUE_UPDATED');
+      alice.emit('APPROVE_QUEUE_ADD', {
+        roomId: 'room-approve-1',
+        track: { id: 'approved-track', title: 'Approved Song' },
+      });
+
+      const [aliceQueue, bobQueue] = await Promise.all([aliceReceived, bobReceived]);
+      expect(aliceQueue.some((t) => t.id === 'approved-track')).toBe(true);
+      expect(bobQueue.some((t) => t.id === 'approved-track')).toBe(true);
+
+      alice.disconnect();
+      bob.disconnect();
+    });
+
+    it('non-host APPROVE_QUEUE_ADD is ignored', async () => {
+      const [alice, bob] = await Promise.all([connect(), connect()]);
+      await joinRoom(alice, 'room-approve-2');
+      await joinRoom(bob, 'room-approve-2');
+
+      alice.emit('PLAY', { roomId: 'room-approve-2', positionMs: 0 });
+      await new Promise((r) => setTimeout(r, 50));
+
+      let received = false;
+      alice.on('QUEUE_UPDATED', () => { received = true; });
+      bob.emit('APPROVE_QUEUE_ADD', {
+        roomId: 'room-approve-2',
+        track: { id: 'sneaky-track', title: 'Sneaky Song' },
+      });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(received).toBe(false);
 
       alice.disconnect();
       bob.disconnect();

@@ -35,35 +35,12 @@ class SessionRepositoryImpl
         private val socket: Socket,
     ) : SessionRepository {
         companion object {
-            /**
-             * Buffer capacity for outgoing sync events.
-             *
-             * If collectors fall behind, events will be dropped once this buffer is
-             * full (because [handleTrackEnded] uses [MutableSharedFlow.tryEmit]).
-             * On a failed emission the guard is reverted so the next ENDED callback
-             * can retry rather than permanently suppressing [SyncEvent.PlayNext] for
-             * the current track.
-             */
             private const val EVENT_BUFFER_CAPACITY = 8
-
-            /** Buffer capacity for incoming chat messages. */
             private const val CHAT_BUFFER_CAPACITY = 64
-
-            /**
-             * How long (ms) a typing indicator persists after the last TYPING event
-             * is received.  If no new TYPING arrives within this window the user is
-             * removed from [_typingUsers].
-             */
-            internal const val TYPING_TIMEOUT_MS = 3_000L
-
-            /** Maximum number of chat messages retained in memory per session. */
+            private const val TYPING_TIMEOUT_MS = 3_000L
             private const val MAX_CHAT_MESSAGES = 200
         }
 
-        /**
-         * Internal scope used for typing-timeout coroutines.  Uses [SupervisorJob] so
-         * that a cancelled child (typing timeout) does not cancel the whole scope.
-         */
         private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         private val _session = MutableStateFlow<Session?>(null)
@@ -72,23 +49,8 @@ class SessionRepositoryImpl
         private val _reactions = MutableSharedFlow<String>(extraBufferCapacity = CHAT_BUFFER_CAPACITY)
         private val _typingUsers = MutableStateFlow<Set<String>>(emptySet())
 
-        /**
-         * Guards against duplicate [SyncEvent.PlayNext] emissions for the same
-         * track.  Set to `true` on the first ENDED callback; reset to `false`
-         * when a new track starts (PLAYING state) or when the session changes.
-         */
         private val playNextEmitted = AtomicBoolean(false)
-
-        /**
-         * Mutex protecting [typingJobs] against concurrent access from Socket.IO
-         * callback threads and the repository's coroutine scope.
-         */
         private val typingJobsMutex = Mutex()
-
-        /**
-         * Tracks pending "stop-typing" cleanup coroutines keyed by senderId so that
-         * each new TYPING event from the same user resets the timeout.
-         */
         private val typingJobs = mutableMapOf<String, Job>()
 
         init {
@@ -103,21 +65,46 @@ class SessionRepositoryImpl
                 _events.tryEmit(SyncEvent.PeerLeft)
             }
 
+            socket.on(SocketEvents.HOST_TRANSFERRED) { args ->
+                val payload = args.firstOrNull() as? JSONObject ?: return@on
+                val newHostSocketId = payload.optString("newHostSocketId")
+                if (newHostSocketId.isBlank()) return@on
+                val isNowHost = newHostSocketId == socket.id()
+                _events.tryEmit(SyncEvent.HostTransferred(isNowHost))
+            }
+
+            socket.on(SocketEvents.DEMOCRATIC_MODE_CHANGED) { args ->
+                val payload = args.firstOrNull() as? JSONObject ?: return@on
+                val enabled = payload.optBoolean("enabled", false)
+                _events.tryEmit(SyncEvent.DemocraticModeChanged(enabled))
+            }
+
+            socket.on(SocketEvents.AUTO_APPROVE_QUEUE_CHANGED) { args ->
+                val payload = args.firstOrNull() as? JSONObject ?: return@on
+                val enabled = payload.optBoolean("enabled", true)
+                _events.tryEmit(SyncEvent.AutoApproveQueueChanged(enabled))
+            }
+
+            socket.on(SocketEvents.QUEUE_ADD_REQUEST) { args ->
+                val payload = args.firstOrNull() as? JSONObject ?: return@on
+                val trackId = payload.optString("id").takeIf { it.isNotBlank() } ?: return@on
+                val trackTitle = payload.optString("title").takeIf { it.isNotBlank() } ?: return@on
+                _events.tryEmit(SyncEvent.QueueAddRequest(trackId, trackTitle))
+            }
+
             socket.on(SocketEvents.CHAT_MESSAGE) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
-                // The server sets senderId to socket.id, so it is the authoritative sender ID.
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 val senderName = obj.optString("senderName").ifBlank { "Someone" }
                 val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return@on
-                val message =
-                    ChatMessage(
-                        id = UUID.randomUUID().toString(),
-                        senderId = senderId,
-                        senderName = senderName,
-                        text = text,
-                        timestamp = System.currentTimeMillis(),
-                        isLocal = false,
-                    )
+                val message = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    senderId = senderId,
+                    senderName = senderName,
+                    text = text,
+                    timestamp = System.currentTimeMillis(),
+                    isLocal = false,
+                )
                 _chatMessages.tryEmit(message)
             }
 
@@ -129,22 +116,16 @@ class SessionRepositoryImpl
 
             socket.on(SocketEvents.TYPING) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
-                // The server sets senderId to socket.id, so it is the authoritative sender ID.
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
-                // Add the typing user and schedule auto-removal after the timeout.
                 _typingUsers.update { it + senderId }
                 scheduleTypingTimeout(senderId)
             }
         }
 
         override val session: StateFlow<Session?> = _session.asStateFlow()
-
         override val events: SharedFlow<SyncEvent> = _events.asSharedFlow()
-
         override val chatMessages: SharedFlow<ChatMessage> = _chatMessages.asSharedFlow()
-
         override val reactions: SharedFlow<String> = _reactions.asSharedFlow()
-
         override val typingUsers: StateFlow<Set<String>> = _typingUsers.asStateFlow()
 
         override fun onPlayerStateChanged(state: PlayerState) {
@@ -186,25 +167,19 @@ class SessionRepositoryImpl
             socket.emit(SocketEvents.END_SESSION, roomId)
         }
 
-        override fun sendChatMessage(
-            text: String,
-            senderName: String,
-        ) {
+        override fun sendChatMessage(text: String, senderName: String) {
             val session = _session.value ?: return
             val trimmedText = text.trim().takeIf { it.isNotBlank() } ?: return
             val trimmedName = senderName.trim().ifBlank { "You" }
-            // Emit locally first so the sender sees the message immediately.
-            val localMessage =
-                ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    senderId = session.localUserId,
-                    senderName = trimmedName,
-                    text = trimmedText,
-                    timestamp = System.currentTimeMillis(),
-                    isLocal = true,
-                )
+            val localMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                senderId = session.localUserId,
+                senderName = trimmedName,
+                text = trimmedText,
+                timestamp = System.currentTimeMillis(),
+                isLocal = true,
+            )
             _chatMessages.tryEmit(localMessage)
-            // Broadcast to other room members.
             socket.emit(
                 SocketEvents.CHAT_MESSAGE,
                 JSONObject()
@@ -236,6 +211,46 @@ class SessionRepositoryImpl
             )
         }
 
+        override fun transferHost(roomId: String, newHostSocketId: String) {
+            val payload = JSONObject().apply {
+                put("roomId", roomId)
+                put("newHostSocketId", newHostSocketId)
+            }
+            socket.emit(SocketEvents.TRANSFER_HOST, payload)
+        }
+
+        override fun setDemocraticMode(roomId: String, enabled: Boolean) {
+            val payload = JSONObject().apply {
+                put("roomId", roomId)
+                put("enabled", enabled)
+            }
+            socket.emit(SocketEvents.SET_DEMOCRATIC_MODE, payload)
+        }
+
+        override fun setAutoApproveQueue(roomId: String, enabled: Boolean) {
+            val payload = JSONObject().apply {
+                put("roomId", roomId)
+                put("enabled", enabled)
+            }
+            socket.emit(SocketEvents.SET_AUTO_APPROVE_QUEUE, payload)
+        }
+
+        override fun requestQueueAdd(roomId: String, trackId: String, trackTitle: String) {
+            val payload = JSONObject().apply {
+                put("roomId", roomId)
+                put("track", JSONObject().put("id", trackId).put("title", trackTitle))
+            }
+            socket.emit(SocketEvents.REQUEST_QUEUE_ADD, payload)
+        }
+
+        override fun approveQueueAdd(roomId: String, trackId: String, trackTitle: String) {
+            val payload = JSONObject().apply {
+                put("roomId", roomId)
+                put("track", JSONObject().put("id", trackId).put("title", trackTitle))
+            }
+            socket.emit(SocketEvents.APPROVE_QUEUE_ADD, payload)
+        }
+
         // -----------------------------------------------------------------
         // Private helpers
         // -----------------------------------------------------------------
@@ -243,38 +258,24 @@ class SessionRepositoryImpl
         private fun handleTrackEnded() {
             val session = _session.value ?: return
             if (!isLocalUserHost(session)) return
-            // compareAndSet returns true only for the first caller, preventing
-            // duplicate PLAY_NEXT emissions even under concurrent callbacks.
             if (!playNextEmitted.compareAndSet(false, true)) return
             val emitted = _events.tryEmit(SyncEvent.PlayNext(session.sessionId))
             if (!emitted) {
-                // If the SharedFlow could not accept the event, clear the guard so
-                // a subsequent callback can retry instead of permanently
-                // suppressing PlayNext for this track.
                 playNextEmitted.compareAndSet(true, false)
             }
         }
 
         private fun isLocalUserHost(session: Session): Boolean = session.localUserId == session.hostId
 
-        /**
-         * Resets (or starts) the inactivity coroutine that removes [senderId] from
-         * [_typingUsers] after [TYPING_TIMEOUT_MS] ms of silence.
-         *
-         * Access to [typingJobs] is serialised by [typingJobsMutex] to prevent
-         * concurrent-modification issues between Socket.IO callback threads and
-         * the coroutine scope.
-         */
         private fun scheduleTypingTimeout(senderId: String) {
             repositoryScope.launch {
                 typingJobsMutex.withLock {
                     typingJobs[senderId]?.cancel()
-                    typingJobs[senderId] =
-                        repositoryScope.launch {
-                            delay(TYPING_TIMEOUT_MS)
-                            _typingUsers.update { it - senderId }
-                            typingJobsMutex.withLock { typingJobs.remove(senderId) }
-                        }
+                    typingJobs[senderId] = repositoryScope.launch {
+                        delay(TYPING_TIMEOUT_MS)
+                        _typingUsers.update { it - senderId }
+                        typingJobsMutex.withLock { typingJobs.remove(senderId) }
+                    }
                 }
             }
         }

@@ -8,82 +8,59 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 interface SessionRepository {
-    /** A flow of the current session, or null when not in a session. */
     val session: StateFlow<Session?>
-
-    /** A flow of outgoing sync events to be forwarded to the server. */
     val events: SharedFlow<SyncEvent>
-
-    /** A flow of chat messages received from other room members, plus echoes of sent messages. */
     val chatMessages: SharedFlow<ChatMessage>
-
-    /** A flow of ephemeral emoji reactions received from other room members. */
     val reactions: SharedFlow<String>
-
-    /**
-     * A flow of user IDs currently typing in the room.
-     *
-     * Entries are removed automatically after a short inactivity window.
-     */
     val typingUsers: StateFlow<Set<String>>
 
-    /**
-     * Called whenever the player state changes.
-     *
-     * When the state transitions to [PlayerState.ENDED] and the local user is
-     * the session host, a [SyncEvent.PlayNext] event is emitted exactly once
-     * per track to prevent duplicate triggers.  The guard is reset when the
-     * player transitions to [PlayerState.PLAYING], signalling that a new track
-     * has started, and also when the session context changes (for example,
-     * joining, leaving, or reconnecting to a session).
-     */
     fun onPlayerStateChanged(state: PlayerState)
-
-    /** Joins (or creates) a session. */
     fun joinSession(session: Session)
-
-    /** Leaves the current session. */
     fun leaveSession()
-
-    /**
-     * Ends the session for all participants (host only).
-     *
-     * Emits an `end_session` socket event so the server broadcasts `ROOM_CLOSED`
-     * to every member.  After calling this, the caller should navigate away —
-     * the local session state is cleared when `ROOM_CLOSED` is received.
-     */
     fun endSession()
-
-    /**
-     * Sends a chat message to all other members of the current room.
-     *
-     * Also emits the message locally (with [ChatMessage.isLocal] = `true`) so
-     * the sender sees their own message immediately without waiting for a server
-     * echo.  No-op when there is no active session.
-     *
-     * @param text        The message text to send.
-     * @param senderName  Display name shown alongside the message.
-     */
-    fun sendChatMessage(
-        text: String,
-        senderName: String,
-    )
-
-    /**
-     * Broadcasts an ephemeral emoji reaction to all other members.
-     *
-     * No-op when there is no active session.
-     *
-     * @param emoji The emoji string to broadcast (e.g. "🔥").
-     */
+    fun sendChatMessage(text: String, senderName: String)
     fun sendReaction(emoji: String)
+    fun sendTyping(senderName: String)
 
     /**
-     * Notifies other room members that the local user is composing a message.
-     *
-     * No-op when there is no active session.
-     *
-     * @param senderName Display name of the typing user.
+     * Transfers the host role to the participant identified by [newHostSocketId].
+     * Only the current host may call this; the server validates and then broadcasts
+     * HOST_TRANSFERRED to all room members.
      */
-    fun sendTyping(senderName: String)
+    fun transferHost(roomId: String, newHostSocketId: String)
+
+    /**
+     * Enables or disables democratic mode for the room (host only).
+     * When enabled, any room member may send PLAY/PAUSE/SEEK commands.
+     * The server broadcasts DEMOCRATIC_MODE_CHANGED to all members.
+     */
+    fun setDemocraticMode(roomId: String, enabled: Boolean)
+
+    /**
+     * Enables or disables auto-approval for guest queue addition requests (host only).
+     * When disabled, guest requests are forwarded to the host for manual approval.
+     * The server broadcasts AUTO_APPROVE_QUEUE_CHANGED to all members.
+     */
+    fun setAutoApproveQueue(roomId: String, enabled: Boolean)
+
+    /**
+     * Requests to add a track to the room queue (guests use this in non-democratic mode).
+     * The server either auto-approves (adds to queue and broadcasts QUEUE_UPDATED) or
+     * forwards a QUEUE_ADD_REQUEST event to the host for manual approval.
+     *
+     * @param roomId     The session / room identifier.
+     * @param trackId    A client-generated UUID identifying the request.
+     * @param trackTitle Human-readable title of the track.
+     */
+    fun requestQueueAdd(roomId: String, trackId: String, trackTitle: String)
+
+    /**
+     * Approves a guest queue addition request (host only).
+     * The server adds the track to the queue and broadcasts QUEUE_UPDATED.
+     *
+     * @param roomId     The session / room identifier.
+     * @param trackId    The track ID originally sent in the QUEUE_ADD_REQUEST.
+     * @param trackTitle Human-readable title of the track.
+     */
+    fun approveQueueAdd(roomId: String, trackId: String, trackTitle: String)
 }

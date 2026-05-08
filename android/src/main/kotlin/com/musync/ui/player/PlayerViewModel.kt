@@ -142,8 +142,15 @@ class PlayerViewModel
         /**
          * `true` when this client is the session host (i.e. no deep-link room ID was provided).
          * Only the host emits PLAY / PAUSE / SEEK / SYNC_HEARTBEAT events to the server.
+         *
+         * This value starts as the client-side determination (whether a deep-link roomId was
+         * provided), and is updated dynamically when a [SyncEvent.HostTransferred] event is
+         * received — allowing the host role to be transferred to any participant at runtime.
          */
-        internal val isHost: Boolean
+        internal var isHost: Boolean
+
+        /** `true` when democratic mode is active (any room member can control playback). */
+        internal var isDemocratic: Boolean = false
 
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
@@ -213,8 +220,41 @@ class PlayerViewModel
             viewModelScope.launch {
                 sessionRepository.events.collect { event ->
                     when (event) {
-                        is SyncEvent.RoomClosed ->
+                        is SyncEvent.RoomClosed -> {
                             _uiState.update { it.copy(roomClosedByHost = true, navigateBack = true) }
+                        }
+                        is SyncEvent.HostTransferred -> {
+                            isHost = event.isNowHost
+                            _uiState.update { it.copy(isHost = event.isNowHost) }
+                            if (event.isNowHost) {
+                                // Promoted to host: stop receiving remote commands,
+                                // reconcile heartbeat with current playback state.
+                                playbackSyncReceiver.stopListening()
+                                if (_uiState.value.isPlaying) {
+                                    wasPlaying = true
+                                    startHeartbeat()
+                                } else {
+                                    stopHeartbeat()
+                                }
+                            } else {
+                                // Demoted to guest: start receiving commands from the new host.
+                                playbackSyncReceiver.startListening()
+                                stopHeartbeat()
+                                wasPlaying = false
+                            }
+                        }
+                        is SyncEvent.DemocraticModeChanged -> {
+                            isDemocratic = event.enabled
+                            _uiState.update { it.copy(isDemocraticMode = event.enabled) }
+                        }
+                        is SyncEvent.AutoApproveQueueChanged -> {
+                            _uiState.update { it.copy(autoApproveQueue = event.enabled) }
+                        }
+                        is SyncEvent.QueueAddRequest -> {
+                            _uiState.update { state ->
+                                state.copy(pendingQueueRequests = state.pendingQueueRequests + (event.trackId to event.trackTitle))
+                            }
+                        }
                         is SyncEvent.PlayNext -> loadNextTrack()
                         is SyncEvent.MembersSnapshot ->
                             _uiState.update { it.copy(participantCount = event.count) }
@@ -287,7 +327,7 @@ class PlayerViewModel
             isBuffering: Boolean = false,
         ) {
             _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
-            if (!isHost) return
+            if (!isHost && !isDemocratic) return
 
             val positionMs = (_uiState.value.currentSecond * 1000).toLong()
             when {
@@ -369,8 +409,51 @@ class PlayerViewModel
          * can seek to the same position.  No-op for guest clients.
          */
         fun onUserSeeked(positionMs: Long) {
-            if (!isHost) return
+            if (!isHost && !isDemocratic) return
             syncEmitter.emitSeek(roomId, positionMs)
+        }
+
+        /**
+         * Transfers the host role to the participant identified by [newHostSocketId].
+         *
+         * No-op when the local user is not the current host.  The server validates
+         * the request and broadcasts [com.musync.sync.SocketEvents.HOST_TRANSFERRED]
+         * to all room members on success.
+         *
+         * @param newHostSocketId The socket ID of the room member to promote to host.
+         */
+        fun onTransferHost(newHostSocketId: String) {
+            if (!isHost) return
+            sessionRepository.transferHost(roomId, newHostSocketId)
+        }
+
+        fun onSetDemocraticMode(enabled: Boolean) {
+            if (!isHost) return
+            sessionRepository.setDemocraticMode(roomId, enabled)
+        }
+
+        fun onSetAutoApproveQueue(enabled: Boolean) {
+            if (!isHost) return
+            sessionRepository.setAutoApproveQueue(roomId, enabled)
+        }
+
+        fun onRequestQueueAdd(trackId: String, trackTitle: String) {
+            sessionRepository.requestQueueAdd(roomId, trackId, trackTitle)
+        }
+
+        fun onApproveQueueAdd(trackId: String, trackTitle: String) {
+            if (!isHost) return
+            sessionRepository.approveQueueAdd(roomId, trackId, trackTitle)
+            _uiState.update { state ->
+                state.copy(pendingQueueRequests = state.pendingQueueRequests.filter { it.first != trackId })
+            }
+        }
+
+        fun onDismissQueueRequest(trackId: String) {
+            if (!isHost) return
+            _uiState.update { state ->
+                state.copy(pendingQueueRequests = state.pendingQueueRequests.filter { it.first != trackId })
+            }
         }
 
         /**

@@ -88,4 +88,13 @@ data class PlayerUiState(
      * Each entry is an emoji string; entries are consumed and removed by the UI.
      */
     val pendingReactions: List<String> = emptyList(),
+    /** Whether democratic mode is active (any room member can control playback). */
+    val isDemocraticMode: Boolean = false,
+    /** Whether guest queue additions are auto-approved by the server. */
+    val autoApproveQueue: Boolean = true,
+    /**
+     * Pending queue addition requests from guests (host only, when autoApproveQueue=false).
+     * Each entry is a Pair of (trackId, trackTitle).
+     */
+    val pendingQueueRequests: List<Pair<String, String>> = emptyList(),
 )

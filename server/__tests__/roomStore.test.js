@@ -339,7 +339,7 @@ describe('Redis schema fields', () => {
     carol.disconnect();
   });
 
-  it('SEEK preserves isPlaying=true and original hostId', async () => {
+  it('SEEK preserves isPlaying=true and original hostId when host seeks', async () => {
     const [alice, bob] = await Promise.all([connect(), connect()]);
     await joinRoom(alice, 'schema-seek-playing');
     await joinRoom(bob, 'schema-seek-playing');
@@ -347,8 +347,8 @@ describe('Redis schema fields', () => {
     alice.emit('PLAY', { roomId: 'schema-seek-playing', positionMs: 1000 });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Bob seeks — must not change isPlaying or hostId
-    bob.emit('SEEK', { roomId: 'schema-seek-playing', positionMs: 45000 });
+    // Alice (the host) seeks — must not change isPlaying or hostId
+    alice.emit('SEEK', { roomId: 'schema-seek-playing', positionMs: 45000 });
     await new Promise((r) => setTimeout(r, 50));
 
     const carol = await connect();
