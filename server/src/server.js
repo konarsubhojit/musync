@@ -337,7 +337,7 @@ function createApp(options = {}) {
     }
   }
 
-// ── Participant name tracking ─────────────────────────────────────────────
+  // ── Participant name tracking ─────────────────────────────────────────────
   // Ephemeral in-memory map from socketId → { roomId, displayName }.
   // Used to build the PARTICIPANTS_UPDATED payload broadcast on join/leave.
   /** @type {Map<string, { roomId: string, displayName: string }>} */
