@@ -41,11 +41,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.musync.R
+import com.musync.ui.components.SkeletonLine
 import com.musync.util.YouTubeUrlParser
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -260,16 +265,25 @@ private fun VideoPreviewCard(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (isFetchingVideoInfo) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.padding(horizontal = 3.dp))
-                        Text(
-                            text = stringResource(R.string.video_info_loading),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    val loadingDescription = stringResource(R.string.cd_video_preview_loading)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                // Announce loading state changes to screen readers
+                                // (#51) instead of relying on the spinner alone.
+                                .semantics {
+                                    contentDescription = loadingDescription
+                                    liveRegion = LiveRegionMode.Polite
+                                },
+                    ) {
+                        // Skeleton placeholder for the channel-title row while
+                        // we resolve metadata, replacing the lone spinner with
+                        // a clear "content is loading" affordance (#52).
+                        SkeletonLine(
+                            modifier = Modifier.fillMaxWidth(0.6f),
+                            height = 12.dp,
                         )
                     }
                 } else {

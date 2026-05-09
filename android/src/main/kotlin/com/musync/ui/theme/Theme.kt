@@ -32,6 +32,9 @@ private val LightColorScheme =
         onPrimary = MuSyncOnPrimary,
         onBackground = MuSyncLightOnBackground,
         onSurface = MuSyncLightOnSurface,
+        // Use a darker secondary text colour than Material's default so
+        // small captions / hints meet WCAG AA contrast in light mode (#51).
+        onSurfaceVariant = MuSyncLightOnSurfaceVariant,
         error = MuSyncError,
     )
 

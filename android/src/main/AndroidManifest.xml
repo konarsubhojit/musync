@@ -3,6 +3,17 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        Background playback support (#47):
+         - FOREGROUND_SERVICE: required to start any foreground service.
+         - FOREGROUND_SERVICE_MEDIA_PLAYBACK: required for the "mediaPlayback"
+           foreground service type on Android 14+ (API 34).
+         - POST_NOTIFICATIONS: required on Android 13+ (API 33) to display the
+           media-style notification we attach to the foreground service.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".MuSyncApplication"
@@ -35,6 +46,18 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Foreground service that owns the MediaSessionCompat + notification
+            for background playback (#47).  Receives Play / Pause / Skip /
+            Stop intents from the notification's action buttons and forwards
+            them to the running PlayerScreen via MediaPlaybackController.
+        -->
+        <service
+            android:name=".playback.MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
     </application>
 
 </manifest>
+

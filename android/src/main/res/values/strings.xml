@@ -91,6 +91,24 @@
     <string name="settings_theme_dark_mode">Dark mode</string>
     <string name="settings_theme_load_failed">Couldn\'t load theme preference.</string>
     <string name="settings_theme_save_failed">Couldn\'t save theme preference.</string>
+
+    <!-- Background-playback notification (#47) -->
+    <string name="media_notification_channel_name">Now playing</string>
+    <string name="media_notification_channel_description">Shows playback controls for the current MuSync session.</string>
+    <string name="media_notification_default_subtitle">MuSync session</string>
+    <string name="media_notification_action_play">Play</string>
+    <string name="media_notification_action_pause">Pause</string>
+    <string name="media_notification_action_skip_next">Skip to next</string>
+
+    <!-- Accessibility (#51) -->
+    <string name="cd_now_playing_card">Now playing: %1$s. Tap to open the player.</string>
+    <string name="cd_recent_room_loading">Loading status for recent room %1$s</string>
+    <string name="cd_recent_room_active">Recent room %1$s, active with %2$d listeners. Tap rejoin to enter.</string>
+    <string name="cd_recent_room_inactive">Recent room %1$s, inactive. Tap rejoin to attempt to enter.</string>
+    <string name="cd_video_preview_loading">Loading details for the selected YouTube video</string>
+    <string name="cd_seek_slider">Playback position. Currently %1$s of %2$s.</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_play">Play</string>
     <string name="settings_export_logs_title">Export logs</string>
     <string name="settings_export_logs_description">Save the app\'s error logs to a folder on this device. Useful for sharing diagnostics when something goes wrong.</string>
     <string name="settings_export_logs_button">Choose folder &amp; export</string>

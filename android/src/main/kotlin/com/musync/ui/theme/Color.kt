@@ -28,3 +28,12 @@ val MuSyncLightBackground = Color(0xFFF7F7F7)
 val MuSyncLightSurface = Color(0xFFFFFFFF)
 val MuSyncLightOnBackground = Color(0xFF111111)
 val MuSyncLightOnSurface = Color(0xFF111111)
+
+/**
+ * Secondary text colour for the light theme.
+ *
+ * Picked to satisfy WCAG AA contrast (≥ 4.5:1) against
+ * [MuSyncLightSurface] / [MuSyncLightBackground]; the previous default
+ * derived from PurpleGrey80 only reached ~3.1:1 in light mode (#51).
+ */
+val MuSyncLightOnSurfaceVariant = Color(0xFF595959)

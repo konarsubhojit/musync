@@ -179,6 +179,9 @@ dependencies {
     // YouTube Player
     implementation(libs.android.youtube.player)
 
+    // Media session + notification controls (background playback)
+    implementation(libs.androidx.media)
+
     // Socket.IO
     implementation(libs.socket.io.client) {
         // Exclude the default engine.io-client to avoid version conflicts

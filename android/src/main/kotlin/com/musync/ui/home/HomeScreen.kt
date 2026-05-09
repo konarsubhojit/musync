@@ -48,6 +48,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -55,6 +57,7 @@ import com.musync.R
 import com.musync.data.model.RecentRoom
 import com.musync.data.model.Track
 import com.musync.data.remote.RoomStatus
+import com.musync.ui.components.SkeletonLine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -282,10 +285,19 @@ private fun NowPlayingCard(
     track: Track,
     onClick: () -> Unit,
 ) {
+    val cardDescription = stringResource(R.string.cd_now_playing_card, track.title)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                // Merged semantics group so TalkBack reads the card as a single
+                // tappable item with a descriptive label, instead of focusing
+                // each child Text/Icon separately (#51).
+                .semantics(mergeDescendants = true) {
+                    contentDescription = cardDescription
+                },
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -448,9 +460,27 @@ private fun RecentRoomRow(
     status: RoomStatus?,
     onRejoin: () -> Unit,
 ) {
+    val rowDescription =
+        when {
+            status == null ->
+                stringResource(R.string.cd_recent_room_loading, room.displayName)
+            status.active ->
+                stringResource(
+                    R.string.cd_recent_room_active,
+                    room.displayName,
+                    status.listenerCount,
+                )
+            else ->
+                stringResource(R.string.cd_recent_room_inactive, room.displayName)
+        }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .semantics(mergeDescendants = true) {
+                    contentDescription = rowDescription
+                },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -463,29 +493,36 @@ private fun RecentRoomRow(
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
-                Spacer(Modifier.height(2.dp))
-                val statusText =
-                    when {
-                        status == null ->
-                            stringResource(R.string.home_recent_room_status_checking)
-                        status.active ->
+                Spacer(Modifier.height(4.dp))
+                if (status == null) {
+                    // Show a shimmer skeleton while we're still fetching
+                    // the live listener count for this room (#52).
+                    SkeletonLine(
+                        modifier = Modifier.fillMaxWidth(0.5f),
+                        height = 10.dp,
+                    )
+                } else {
+                    val statusText =
+                        if (status.active) {
                             stringResource(
                                 R.string.home_recent_room_status_active,
                                 status.listenerCount,
                             )
-                        else ->
+                        } else {
                             stringResource(R.string.home_recent_room_status_inactive)
-                    }
-                val statusColor =
-                    when {
-                        status?.active == true -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = statusColor,
-                )
+                        }
+                    val statusColor =
+                        if (status.active) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor,
+                    )
+                }
             }
             OutlinedButton(
                 onClick = onRejoin,
