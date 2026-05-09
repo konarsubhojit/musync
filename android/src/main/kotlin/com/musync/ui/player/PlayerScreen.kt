@@ -125,7 +125,7 @@ private const val PLAYER_ERROR_BACKGROUND_ALPHA = 0.72f
 internal fun buildInviteShareMessage(
     messagePrefix: String,
     inviteLink: String,
-): String = "$messagePrefix$inviteLink"
+): String = "$messagePrefix $inviteLink"
 
 private fun shareInviteLink(
     context: android.content.Context,
