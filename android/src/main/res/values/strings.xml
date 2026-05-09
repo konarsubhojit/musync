@@ -89,6 +89,8 @@
     <string name="settings_theme_title">Theme</string>
     <string name="settings_theme_description">Choose how MuSync looks across the app.</string>
     <string name="settings_theme_dark_mode">Dark mode</string>
+    <string name="settings_theme_load_failed">Couldn\'t load theme preference.</string>
+    <string name="settings_theme_save_failed">Couldn\'t save theme preference.</string>
     <string name="settings_export_logs_title">Export logs</string>
     <string name="settings_export_logs_description">Save the app\'s error logs to a folder on this device. Useful for sharing diagnostics when something goes wrong.</string>
     <string name="settings_export_logs_button">Choose folder &amp; export</string>

@@ -1,6 +1,10 @@
 package com.musync.ui.settings
 
+import android.content.Context
+import com.musync.R
 import com.musync.data.repository.UserPreferencesRepository
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +24,12 @@ import org.junit.Test
 class SettingsViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
+    private val context: Context =
+        mockk {
+            every { getString(R.string.settings_theme_load_failed) } returns "load-failed"
+            every { getString(R.string.settings_theme_save_failed) } returns "save-failed"
+        }
+
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
@@ -34,7 +44,7 @@ class SettingsViewModelTest {
     fun `init reflects persisted dark theme preference`() =
         runTest {
             val repository = FakeUserPreferencesRepository(initialDarkTheme = false)
-            val viewModel = SettingsViewModel(repository)
+            val viewModel = SettingsViewModel(context, repository)
 
             advanceUntilIdle()
 
@@ -45,7 +55,7 @@ class SettingsViewModelTest {
     fun `onDarkThemeToggled updates state and persists preference`() =
         runTest {
             val repository = FakeUserPreferencesRepository(initialDarkTheme = true)
-            val viewModel = SettingsViewModel(repository)
+            val viewModel = SettingsViewModel(context, repository)
 
             viewModel.onDarkThemeToggled(false)
             advanceUntilIdle()
@@ -58,13 +68,13 @@ class SettingsViewModelTest {
     fun `onDarkThemeToggled reverts state when persistence fails`() =
         runTest {
             val repository = FakeUserPreferencesRepository(initialDarkTheme = true, failOnSave = true)
-            val viewModel = SettingsViewModel(repository)
+            val viewModel = SettingsViewModel(context, repository)
 
             viewModel.onDarkThemeToggled(false)
             advanceUntilIdle()
 
             assertEquals(true, viewModel.uiState.value.isDarkTheme)
-            assertEquals("Couldn't save theme preference.", viewModel.uiState.value.message)
+            assertEquals("save-failed", viewModel.uiState.value.message)
         }
 
     private class FakeUserPreferencesRepository(

@@ -2,12 +2,15 @@ package com.musync.ui.settings
 
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.musync.R
 import com.musync.data.repository.UserPreferencesRepository
 import com.musync.logging.AppLogger
 import com.musync.logging.LogExporter
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +29,7 @@ import javax.inject.Inject
 class SettingsViewModel
     @Inject
     constructor(
+        @ApplicationContext private val appContext: Context,
         private val userPreferencesRepository: UserPreferencesRepository,
     ) : ViewModel() {
         private val _uiState = MutableStateFlow(SettingsUiState())
@@ -35,8 +39,8 @@ class SettingsViewModel
             viewModelScope.launch {
                 userPreferencesRepository.darkTheme
                     .catch { error ->
-                        AppLogger.w(TAG, "Failed to read theme preference: ${error.message}")
-                        _uiState.update { it.copy(message = "Couldn't load theme preference.") }
+                        AppLogger.w(TAG, "Failed to read theme preference", error)
+                        _uiState.update { it.copy(message = string(R.string.settings_theme_load_failed)) }
                     }
                     .collect { enabled ->
                         _uiState.update { it.copy(isDarkTheme = enabled) }
@@ -50,11 +54,11 @@ class SettingsViewModel
             viewModelScope.launch {
                 runCatching { userPreferencesRepository.saveDarkTheme(enabled) }
                     .onFailure { error ->
-                        AppLogger.w(TAG, "Failed to save theme preference: ${error.message}")
+                        AppLogger.w(TAG, "Failed to save theme preference", error)
                         _uiState.update {
                             it.copy(
                                 isDarkTheme = previous,
-                                message = "Couldn't save theme preference.",
+                                message = string(R.string.settings_theme_save_failed),
                             )
                         }
                     }
@@ -102,4 +106,8 @@ class SettingsViewModel
         private companion object {
             const val TAG = "SettingsViewModel"
         }
+
+        private fun string(
+            @StringRes resId: Int,
+        ): String = appContext.getString(resId)
     }
