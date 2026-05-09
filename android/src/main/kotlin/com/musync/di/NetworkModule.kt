@@ -17,7 +17,17 @@ import javax.inject.Singleton
 object NetworkModule {
     @Provides
     @Singleton
-    fun provideSocket(): Socket = IO.socket(BuildConfig.SERVER_URL)
+    fun provideSocket(): Socket =
+        IO.socket(
+            BuildConfig.SERVER_URL,
+            IO.Options.builder()
+                .setReconnection(true)
+                .setReconnectionAttempts(Int.MAX_VALUE)
+                .setReconnectionDelay(1_000)
+                .setReconnectionDelayMax(10_000)
+                .setRandomizationFactor(0.5)
+                .build(),
+        )
 
     @Provides
     @Singleton

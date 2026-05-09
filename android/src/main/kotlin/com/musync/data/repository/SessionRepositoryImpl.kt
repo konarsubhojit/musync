@@ -1,6 +1,7 @@
 package com.musync.data.repository
 
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.ConnectionState
 import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
@@ -55,6 +56,25 @@ class SessionRepositoryImpl
         private val typingJobs = mutableMapOf<String, Job>()
 
         init {
+            socket.on(Socket.EVENT_CONNECT) {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTED))
+            }
+            socket.on(Socket.EVENT_DISCONNECT) {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.DISCONNECTED))
+            }
+            socket.on(Socket.EVENT_CONNECT_ERROR) {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+            }
+            socket.on("reconnect_attempt") {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+            }
+            socket.on("reconnect_error") {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+            }
+            socket.on("reconnect_failed") {
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.DISCONNECTED))
+            }
+
             socket.on(SocketEvents.ROOM_CLOSED) {
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
@@ -154,6 +174,7 @@ class SessionRepositoryImpl
         override fun joinSession(session: Session) {
             playNextEmitted.set(false)
             _session.value = session
+            _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
             socket.connect()
             val payload =
                 JSONObject().apply {
@@ -165,6 +186,16 @@ class SessionRepositoryImpl
                 payload,
                 Ack { args ->
                     val data = (args.getOrNull(0) as? JSONObject)
+                    val error = data?.optString("error")?.takeIf { it.isNotBlank() }
+                    val ok = data?.optBoolean("ok", false) == true
+                    if (!ok && (error != null || data?.has("ok") == true)) {
+                        _events.tryEmit(SyncEvent.RoomJoinFailed(error))
+                        return@Ack
+                    }
+                    if (!ok && data == null) {
+                        _events.tryEmit(SyncEvent.RoomJoinFailed(null))
+                        return@Ack
+                    }
                     val memberCount = data?.optInt("memberCount", 1) ?: 1
                     _events.tryEmit(SyncEvent.MembersSnapshot(memberCount))
                 },
