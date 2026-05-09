@@ -44,12 +44,17 @@ function createApp(options = {}) {
   }
 
   function getVideoInfoCacheMaxSize() {
-    return Math.max(1, parseInt(process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE ?? '500', 10));
+    const parsed = parseInt(process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE ?? '500', 10);
+    if (Number.isNaN(parsed)) return 500;
+    return Math.max(1, parsed);
   }
 
   function setVideoInfoCache(videoId, payload) {
     const maxSize = getVideoInfoCacheMaxSize();
-    while (!videoInfoCache.has(videoId) && videoInfoCache.size >= maxSize) {
+    if (videoInfoCache.has(videoId)) {
+      videoInfoCache.delete(videoId);
+    }
+    while (videoInfoCache.size >= maxSize) {
       const oldestKey = videoInfoCache.keys().next().value;
       if (oldestKey === undefined) break;
       videoInfoCache.delete(oldestKey);

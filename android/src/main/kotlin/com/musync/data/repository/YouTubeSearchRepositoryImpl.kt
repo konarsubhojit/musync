@@ -9,7 +9,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
-import java.util.Collections
 import java.util.LinkedHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,13 +19,7 @@ class YouTubeSearchRepositoryImpl
     constructor(
         private val okHttpClient: OkHttpClient,
     ) : YouTubeSearchRepository {
-        private val videoInfoCache =
-            Collections.synchronizedMap(
-                object : LinkedHashMap<String, YouTubeVideoInfo>(MAX_VIDEO_INFO_CACHE_SIZE + 1, 0.75f, true) {
-                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, YouTubeVideoInfo>?): Boolean =
-                        size > MAX_VIDEO_INFO_CACHE_SIZE
-                },
-            )
+        private val videoInfoCache = LinkedHashMap<String, YouTubeVideoInfo>(MAX_VIDEO_INFO_CACHE_SIZE, 0.75f, true)
 
         override suspend fun search(query: String): Result<List<YouTubeSearchResult>> =
             withContext(Dispatchers.IO) {
@@ -68,7 +61,7 @@ class YouTubeSearchRepositoryImpl
 
         override suspend fun fetchVideoInfo(videoId: String): Result<YouTubeVideoInfo> =
             withContext(Dispatchers.IO) {
-                val cached = videoInfoCache[videoId]
+                val cached = getCachedVideoInfo(videoId)
                 if (cached != null) {
                     return@withContext Result.success(cached)
                 }
@@ -91,13 +84,34 @@ class YouTubeSearchRepositoryImpl
                                 title = item.getString("title"),
                                 channelTitle = item.optString("channelTitle"),
                             )
-                        videoInfoCache[videoId] = info
+                        putCachedVideoInfo(videoId, info)
                         Result.success(info)
                     }
                 } catch (e: Exception) {
                     Result.failure(e)
                 }
             }
+
+        private fun getCachedVideoInfo(videoId: String): YouTubeVideoInfo? =
+            synchronized(videoInfoCache) {
+                videoInfoCache[videoId]
+            }
+
+        private fun putCachedVideoInfo(
+            videoId: String,
+            info: YouTubeVideoInfo,
+        ) {
+            synchronized(videoInfoCache) {
+                videoInfoCache.remove(videoId)
+                while (videoInfoCache.size >= MAX_VIDEO_INFO_CACHE_SIZE) {
+                    val iterator = videoInfoCache.entries.iterator()
+                    if (!iterator.hasNext()) break
+                    iterator.next()
+                    iterator.remove()
+                }
+                videoInfoCache[videoId] = info
+            }
+        }
     }
 
 private const val MAX_VIDEO_INFO_CACHE_SIZE = 500
