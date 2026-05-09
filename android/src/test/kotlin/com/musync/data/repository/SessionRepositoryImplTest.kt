@@ -44,6 +44,7 @@ class SessionRepositoryImplTest {
     private var disconnectListener: Emitter.Listener? = null
     private var connectErrorListener: Emitter.Listener? = null
     private var reconnectAttemptListener: Emitter.Listener? = null
+    private var reconnectErrorListener: Emitter.Listener? = null
     private var reconnectFailedListener: Emitter.Listener? = null
 
     private val hostSession = Session(sessionId = "session-1", hostId = "user-1", localUserId = "user-1")
@@ -127,6 +128,11 @@ class SessionRepositoryImplTest {
         val reconnectAttemptSlot = slot<Emitter.Listener>()
         every { socket.on("reconnect_attempt", capture(reconnectAttemptSlot)) } answers {
             reconnectAttemptListener = reconnectAttemptSlot.captured
+            socket
+        }
+        val reconnectErrorSlot = slot<Emitter.Listener>()
+        every { socket.on("reconnect_error", capture(reconnectErrorSlot)) } answers {
+            reconnectErrorListener = reconnectErrorSlot.captured
             socket
         }
         val reconnectFailedSlot = slot<Emitter.Listener>()
@@ -656,6 +662,7 @@ class SessionRepositoryImplTest {
                     connectListener?.call()
                     disconnectListener?.call("transport close")
                     reconnectAttemptListener?.call(1)
+                    reconnectErrorListener?.call(RuntimeException("retry failed"))
                     connectErrorListener?.call(RuntimeException("network"))
                     reconnectFailedListener?.call()
                 }
@@ -675,6 +682,20 @@ class SessionRepositoryImplTest {
             val emitted =
                 collectEvents {
                     ackSlot.captured.call(JSONObject().put("error", "invalid roomId"))
+                }
+            assertTrue(emitted.any { it is SyncEvent.RoomJoinFailed })
+        }
+
+    @Test
+    fun `joinSession emits RoomJoinFailed when ack payload is missing`() =
+        runTest {
+            val ackSlot = slot<io.socket.client.Ack>()
+            every { socket.emit(eq("join_room"), any<JSONObject>(), capture(ackSlot)) } returns socket
+
+            repository.joinSession(hostSession)
+            val emitted =
+                collectEvents {
+                    ackSlot.captured.call()
                 }
             assertTrue(emitted.any { it is SyncEvent.RoomJoinFailed })
         }

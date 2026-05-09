@@ -186,17 +186,18 @@ class SessionRepositoryImpl
                 payload,
                 Ack { args ->
                     val data = (args.getOrNull(0) as? JSONObject)
-                    val error = data?.optString("error")?.takeIf { it.isNotBlank() }
-                    val ok = data?.optBoolean("ok", false) == true
-                    if (!ok && (error != null || data?.has("ok") == true)) {
+                    if (data == null) {
+                        _events.tryEmit(SyncEvent.RoomJoinFailed("No response from server"))
+                        return@Ack
+                    }
+                    val error = data.optString("error").takeIf { it.isNotBlank() }
+                    val hasOk = data.has("ok")
+                    val ok = data.optBoolean("ok", false)
+                    if (error != null || (hasOk && !ok)) {
                         _events.tryEmit(SyncEvent.RoomJoinFailed(error))
                         return@Ack
                     }
-                    if (!ok && data == null) {
-                        _events.tryEmit(SyncEvent.RoomJoinFailed(null))
-                        return@Ack
-                    }
-                    val memberCount = data?.optInt("memberCount", 1) ?: 1
+                    val memberCount = data.optInt("memberCount", 1)
                     _events.tryEmit(SyncEvent.MembersSnapshot(memberCount))
                 },
             )

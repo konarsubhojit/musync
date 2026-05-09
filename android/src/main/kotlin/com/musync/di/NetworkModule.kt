@@ -22,7 +22,7 @@ object NetworkModule {
             BuildConfig.SERVER_URL,
             IO.Options.builder()
                 .setReconnection(true)
-                .setReconnectionAttempts(Int.MAX_VALUE)
+                .setReconnectionAttempts(100)
                 .setReconnectionDelay(1_000)
                 .setReconnectionDelayMax(10_000)
                 .setRandomizationFactor(0.5)

@@ -98,6 +98,8 @@ import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
+private const val PLAYER_ERROR_OVERLAY_ALPHA = 0.72f
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerScreen(
@@ -383,11 +385,14 @@ private fun ConnectionStateBanner(connectionState: ConnectionState) {
 @Composable
 private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
     Surface(
-        color = Color.Black.copy(alpha = 0.72f),
+        color = Color.Black.copy(alpha = PLAYER_ERROR_OVERLAY_ALPHA),
         modifier = Modifier.fillMaxSize(),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

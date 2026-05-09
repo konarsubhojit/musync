@@ -14,6 +14,7 @@ import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
+import com.musync.logging.AppLogger
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -97,6 +98,7 @@ class PlayerViewModel
              * long sessions do not grow memory usage or recomposition cost unboundedly.
              */
             internal const val MAX_CHAT_MESSAGES = 200
+            private const val TAG = "PlayerViewModel"
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -810,8 +812,7 @@ class PlayerViewModel
             if (!isHost) return
             val updatedQueue = _uiState.value.queue.filter { it.id != trackId }
             musicRepository.updateQueue(updatedQueue)
-            runCatching { syncEmitter.emitQueueUpdated(roomId, updatedQueue) }
-                .onFailure { _uiState.update { state -> state.copy(transientError = PlayerTransientError.QUEUE_SYNC_FAILED) } }
+            emitQueueUpdatedOrShowError(updatedQueue)
         }
 
         /**
@@ -828,8 +829,7 @@ class PlayerViewModel
             val item = current.removeAt(fromIndex)
             current.add(toIndex, item)
             musicRepository.updateQueue(current)
-            runCatching { syncEmitter.emitQueueUpdated(roomId, current) }
-                .onFailure { _uiState.update { state -> state.copy(transientError = PlayerTransientError.QUEUE_SYNC_FAILED) } }
+            emitQueueUpdatedOrShowError(current)
         }
 
         /**
@@ -857,7 +857,16 @@ class PlayerViewModel
                     playerLoadError = false,
                 )
             }
+            emitQueueUpdatedOrShowError(updatedQueue)
+        }
+
+        private fun emitQueueUpdatedOrShowError(updatedQueue: List<Track>) {
             runCatching { syncEmitter.emitQueueUpdated(roomId, updatedQueue) }
-                .onFailure { _uiState.update { state -> state.copy(transientError = PlayerTransientError.QUEUE_SYNC_FAILED) } }
+                .onFailure {
+                    AppLogger.w(TAG, "Queue sync emit failed.")
+                    _uiState.update { state ->
+                        state.copy(transientError = PlayerTransientError.QUEUE_SYNC_FAILED)
+                    }
+                }
         }
     }
