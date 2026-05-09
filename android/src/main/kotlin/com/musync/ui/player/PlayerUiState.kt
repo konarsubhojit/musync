@@ -39,6 +39,10 @@ data class PlayerUiState(
     val addToQueueInput: String = "",
     /** True when the URL in the add-to-queue input does not parse to a valid YouTube ID. */
     val addToQueueError: Boolean = false,
+    /** True when the add-to-queue flow is fetching title/channel metadata for a pasted URL. */
+    val isFetchingVideoInfo: Boolean = false,
+    /** True when metadata lookup for a pasted URL failed. */
+    val addToQueueFetchError: Boolean = false,
     /** Whether a YouTube search is currently in progress. */
     val isSearching: Boolean = false,
     /** YouTube search results from the most recent query. */

@@ -320,6 +320,8 @@ fun PlayerScreen(
             AddToQueueBottomSheet(
                 input = uiState.addToQueueInput,
                 isError = uiState.addToQueueError,
+                isFetchingVideoInfo = uiState.isFetchingVideoInfo,
+                fetchError = uiState.addToQueueFetchError,
                 isSearching = uiState.isSearching,
                 searchResults = uiState.searchResults,
                 searchError = uiState.searchError,
@@ -1048,6 +1050,8 @@ private fun QueueRow(
 private fun AddToQueueBottomSheet(
     input: String,
     isError: Boolean,
+    isFetchingVideoInfo: Boolean,
+    fetchError: Boolean,
     isSearching: Boolean,
     searchResults: List<YouTubeSearchResult>,
     searchError: Boolean,
@@ -1086,7 +1090,7 @@ private fun AddToQueueBottomSheet(
                 trailingIcon = {
                     IconButton(
                         onClick = onSearch,
-                        enabled = input.isNotBlank() && !isSearching,
+                        enabled = input.isNotBlank() && !isSearching && !isFetchingVideoInfo,
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Search,
@@ -1103,9 +1107,31 @@ private fun AddToQueueBottomSheet(
                     modifier = Modifier.padding(top = 4.dp, start = 4.dp),
                 )
             }
+            if (fetchError) {
+                Text(
+                    text = stringResource(R.string.player_add_queue_fetch_error),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                )
+            }
 
             // ── Search results area ─────────────────────────────────────────
             when {
+                isFetchingVideoInfo -> {
+                    Spacer(Modifier.height(16.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.video_info_loading),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
                 isSearching -> {
                     Spacer(Modifier.height(16.dp))
                     CircularProgressIndicator(
@@ -1150,7 +1176,10 @@ private fun AddToQueueBottomSheet(
                 horizontalArrangement = Arrangement.End,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                TextButton(onClick = onConfirm, enabled = input.isNotBlank()) {
+                TextButton(
+                    onClick = onConfirm,
+                    enabled = input.isNotBlank() && !isFetchingVideoInfo,
+                ) {
                     Text(stringResource(R.string.player_add_queue_confirm))
                 }
             }

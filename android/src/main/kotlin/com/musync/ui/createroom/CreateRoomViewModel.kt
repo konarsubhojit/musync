@@ -3,9 +3,11 @@ package com.musync.ui.createroom
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.musync.data.repository.UserPreferencesRepository
+import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.logging.AppLogger
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +31,7 @@ class CreateRoomViewModel
     @Inject
     constructor(
         private val userPreferencesRepository: UserPreferencesRepository,
+        private val youTubeSearchRepository: YouTubeSearchRepository,
     ) : ViewModel() {
         private val _uiState =
             MutableStateFlow(
@@ -37,6 +40,7 @@ class CreateRoomViewModel
                 ),
             )
         val uiState: StateFlow<CreateRoomUiState> = _uiState.asStateFlow()
+        private var videoInfoJob: Job? = null
 
         init {
             // Pre-fill the display name field with the value saved from the last session.
@@ -54,14 +58,48 @@ class CreateRoomViewModel
 
         /** Called whenever the URL field text changes.  Re-parses and updates validation. */
         fun onUrlChanged(input: String) {
+            videoInfoJob?.cancel()
             val videoId = YouTubeUrlParser.extractVideoId(input)
             _uiState.update {
                 it.copy(
                     urlInput = input,
                     videoId = videoId,
+                    videoTitle = null,
+                    channelTitle = null,
+                    isFetchingVideoInfo = videoId != null,
+                    videoInfoError = false,
                     urlError = input.isNotBlank() && videoId == null,
                 )
             }
+            if (videoId == null) {
+                return
+            }
+            videoInfoJob =
+                viewModelScope.launch {
+                    val result = youTubeSearchRepository.fetchVideoInfo(videoId)
+                    _uiState.update { state ->
+                        if (state.videoId != videoId) {
+                            state
+                        } else {
+                            result.fold(
+                                onSuccess = { info ->
+                                    state.copy(
+                                        videoTitle = info.title,
+                                        channelTitle = info.channelTitle,
+                                        isFetchingVideoInfo = false,
+                                        videoInfoError = false,
+                                    )
+                                },
+                                onFailure = {
+                                    state.copy(
+                                        isFetchingVideoInfo = false,
+                                        videoInfoError = true,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
         }
 
         /** Called when the user edits the display-name field. */

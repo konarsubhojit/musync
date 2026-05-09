@@ -37,6 +37,11 @@ function createApp(options = {}) {
   const roomStore = options.roomStore ?? createRoomStore();
 
   const app = express();
+  const videoInfoCache = new Map();
+
+  function isValidYouTubeVideoId(videoId) {
+    return /^[A-Za-z0-9_-]{11}$/.test(videoId);
+  }
 
   // ── Health check ──────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
@@ -98,6 +103,69 @@ function createApp(options = {}) {
         res.status(504).json({ error: 'YouTube API request timed out' });
       } else {
         console.error('[youtube-search] error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  // ── YouTube video-info proxy ──────────────────────────────────────────────
+  // GET /api/youtube/video-info/:videoId
+  // Returns title/channel metadata for a single video. Results are cached in
+  // memory to avoid repeated lookups while the process is running.
+  app.get('/api/youtube/video-info/:videoId', async (req, res) => {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'YouTube search not configured' });
+      return;
+    }
+
+    const videoId = (req.params.videoId ?? '').trim();
+    if (!isValidYouTubeVideoId(videoId)) {
+      res.status(400).json({ error: 'Invalid videoId' });
+      return;
+    }
+
+    const cached = videoInfoCache.get(videoId);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const url = new URL('https://www.googleapis.com/youtube/v3/videos');
+      url.searchParams.set('part', 'snippet');
+      url.searchParams.set('id', videoId);
+      url.searchParams.set('key', apiKey);
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) {
+        res.status(502).json({ error: 'YouTube API error' });
+        return;
+      }
+      const data = await response.json();
+      const item = data.items?.[0];
+      if (!item?.snippet?.title) {
+        res.status(404).json({ error: 'Video not found' });
+        return;
+      }
+
+      const payload = {
+        videoId,
+        title: item.snippet.title,
+        channelTitle: item.snippet.channelTitle ?? 'YouTube',
+      };
+      videoInfoCache.set(videoId, payload);
+      res.json(payload);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        res.status(504).json({ error: 'YouTube API request timed out' });
+      } else {
+        console.error('[youtube-video-info] error:', err);
         res.status(500).json({ error: 'Internal server error' });
       }
     } finally {

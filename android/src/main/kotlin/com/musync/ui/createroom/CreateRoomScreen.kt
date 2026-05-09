@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -130,7 +131,13 @@ fun CreateRoomScreen(
 
             // ── Video preview card (only when a valid id was parsed) ──────────
             if (uiState.videoId != null) {
-                VideoPreviewCard(videoId = uiState.videoId!!)
+                VideoPreviewCard(
+                    videoId = uiState.videoId!!,
+                    videoTitle = uiState.videoTitle,
+                    channelTitle = uiState.channelTitle,
+                    isFetchingVideoInfo = uiState.isFetchingVideoInfo,
+                    videoInfoError = uiState.videoInfoError,
+                )
                 Spacer(Modifier.height(20.dp))
             }
 
@@ -206,7 +213,13 @@ private fun UrlValidationHint(
 }
 
 @Composable
-private fun VideoPreviewCard(videoId: String) {
+private fun VideoPreviewCard(
+    videoId: String,
+    videoTitle: String?,
+    channelTitle: String?,
+    isFetchingVideoInfo: Boolean,
+    videoInfoError: Boolean,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth(),
@@ -242,15 +255,37 @@ private fun VideoPreviewCard(videoId: String) {
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = videoId,
+                    text = videoTitle ?: videoId,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Text(
-                    text = "youtube.com/watch?v=$videoId",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (isFetchingVideoInfo) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.padding(horizontal = 3.dp))
+                        Text(
+                            text = stringResource(R.string.video_info_loading),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    Text(
+                        text = channelTitle?.takeIf { it.isNotBlank() } ?: "youtube.com/watch?v=$videoId",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (videoInfoError) {
+                    Text(
+                        text = stringResource(R.string.video_info_error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

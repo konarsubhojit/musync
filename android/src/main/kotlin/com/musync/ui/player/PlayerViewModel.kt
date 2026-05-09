@@ -593,6 +593,8 @@ class PlayerViewModel
                     addToQueueSheetVisible = true,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    isFetchingVideoInfo = false,
+                    addToQueueFetchError = false,
                     searchResults = emptyList(),
                     isSearching = false,
                     searchError = false,
@@ -607,6 +609,9 @@ class PlayerViewModel
             _uiState.update {
                 it.copy(
                     addToQueueSheetVisible = false,
+                    addToQueueError = false,
+                    isFetchingVideoInfo = false,
+                    addToQueueFetchError = false,
                     searchResults = emptyList(),
                     isSearching = false,
                     searchError = false,
@@ -616,13 +621,19 @@ class PlayerViewModel
 
         /** Updates the input field of the bottom sheet. */
         fun onAddToQueueInputChanged(value: String) {
-            _uiState.update { it.copy(addToQueueInput = value, addToQueueError = false) }
+            _uiState.update {
+                it.copy(
+                    addToQueueInput = value,
+                    addToQueueError = false,
+                    addToQueueFetchError = false,
+                )
+            }
         }
 
         /**
-         * Confirms the bottom sheet input — parses the YouTube URL and, if valid,
-         * appends a placeholder track to the local queue via [MusicRepository.addToQueue].
-         * Closes the sheet on success; otherwise sets [PlayerUiState.addToQueueError].
+         * Confirms the bottom sheet input by parsing a YouTube URL/ID and then
+         * resolving metadata for that video before appending the track to the queue.
+         * Closes the sheet on success; otherwise surfaces an error in the sheet.
          */
         fun onAddToQueueConfirm() {
             val input = _uiState.value.addToQueueInput
@@ -633,23 +644,47 @@ class PlayerViewModel
             }
             searchJob?.cancel()
             searchJob = null
-            musicRepository.addToQueue(
-                Track(
-                    id = UUID.randomUUID().toString(),
-                    title = videoId,
-                    artist = "YouTube",
-                    youtubeVideoId = videoId,
-                    durationMs = 0L,
-                ),
-            )
             _uiState.update {
                 it.copy(
-                    addToQueueSheetVisible = false,
-                    addToQueueInput = "",
                     addToQueueError = false,
-                    searchResults = emptyList(),
-                    isSearching = false,
-                    searchError = false,
+                    addToQueueFetchError = false,
+                    isFetchingVideoInfo = true,
+                )
+            }
+            viewModelScope.launch {
+                val result = youTubeSearchRepository.fetchVideoInfo(videoId)
+                result.fold(
+                    onSuccess = { info ->
+                        musicRepository.addToQueue(
+                            Track(
+                                id = UUID.randomUUID().toString(),
+                                title = info.title,
+                                artist = info.channelTitle,
+                                youtubeVideoId = videoId,
+                                durationMs = 0L,
+                            ),
+                        )
+                        _uiState.update {
+                            it.copy(
+                                addToQueueSheetVisible = false,
+                                addToQueueInput = "",
+                                addToQueueError = false,
+                                isFetchingVideoInfo = false,
+                                addToQueueFetchError = false,
+                                searchResults = emptyList(),
+                                isSearching = false,
+                                searchError = false,
+                            )
+                        }
+                    },
+                    onFailure = {
+                        _uiState.update {
+                            it.copy(
+                                isFetchingVideoInfo = false,
+                                addToQueueFetchError = true,
+                            )
+                        }
+                    },
                 )
             }
         }
@@ -708,6 +743,8 @@ class PlayerViewModel
                     addToQueueSheetVisible = false,
                     addToQueueInput = "",
                     addToQueueError = false,
+                    isFetchingVideoInfo = false,
+                    addToQueueFetchError = false,
                     searchResults = emptyList(),
                     isSearching = false,
                     searchError = false,
