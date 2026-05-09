@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -117,7 +118,7 @@ import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
-private const val PLAYER_ERROR_OVERLAY_ALPHA = 0.72f
+private const val PLAYER_ERROR_BACKGROUND_ALPHA = 0.72f
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
@@ -227,6 +228,7 @@ fun PlayerScreen(
         }
 
         val insetsController = WindowCompat.getInsetsController(activity.window, view)
+        val previousSystemBarsBehavior = insetsController.systemBarsBehavior
         if (layoutMode == PlayerLayoutMode.Fullscreen) {
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -235,31 +237,41 @@ fun PlayerScreen(
             insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose {
+            insetsController.systemBarsBehavior = previousSystemBarsBehavior
             insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
     if (layoutMode == PlayerLayoutMode.Fullscreen) {
-        PlayerVideoArea(
-            uiState = uiState,
-            youTubePlayer = youTubePlayer,
-            onPlayerReady = { player -> youTubePlayer = player },
-            onVideoTapped = viewModel::onVideoTapped,
-            onControlsInteraction = viewModel::onControlsInteraction,
-            onPlaybackStateChanged = viewModel::onPlaybackStateChanged,
-            onTrackEnded = viewModel::onTrackEnded,
-            onCurrentSecond = viewModel::onCurrentSecond,
-            onDurationReceived = viewModel::onDurationReceived,
-            onPlayerError = viewModel::onPlayerError,
-            onRetryVideoLoad = viewModel::onRetryVideoLoad,
-            onUserSeeked = viewModel::onUserSeeked,
-            onSkipToNext = viewModel::onSkipToNext,
-            canToggleFullscreen = canUseFullscreen,
-            isFullscreen = true,
-            onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
-            fillContainer = true,
-            modifier = Modifier.fillMaxSize(),
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            PlayerVideoArea(
+                uiState = uiState,
+                youTubePlayer = youTubePlayer,
+                onPlayerReady = { player -> youTubePlayer = player },
+                onVideoTapped = viewModel::onVideoTapped,
+                onControlsInteraction = viewModel::onControlsInteraction,
+                onPlaybackStateChanged = viewModel::onPlaybackStateChanged,
+                onTrackEnded = viewModel::onTrackEnded,
+                onCurrentSecond = viewModel::onCurrentSecond,
+                onDurationReceived = viewModel::onDurationReceived,
+                onPlayerError = viewModel::onPlayerError,
+                onRetryVideoLoad = viewModel::onRetryVideoLoad,
+                onUserSeeked = viewModel::onUserSeeked,
+                onSkipToNext = viewModel::onSkipToNext,
+                canToggleFullscreen = canUseFullscreen,
+                isFullscreen = true,
+                onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
+                fillContainer = true,
+                modifier = Modifier.fillMaxSize(),
+            )
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+            )
+        }
     } else {
         Scaffold(
             topBar = {
@@ -269,7 +281,7 @@ fun PlayerScreen(
                     onBack = viewModel::onBackPressed,
                 )
             },
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             floatingActionButton = {
                 if (uiState.selectedTab == PlayerTab.Queue) {
                     FloatingActionButton(
@@ -381,25 +393,26 @@ fun PlayerScreen(
                 }
             }
 
-            if (uiState.addToQueueSheetVisible) {
-                AddToQueueBottomSheet(
-                    input = uiState.addToQueueInput,
-                    isError = uiState.addToQueueError,
-                    isSearching = uiState.isSearching,
-                    searchResults = uiState.searchResults,
-                    searchError = uiState.searchError,
-                    onInputChanged = viewModel::onAddToQueueInputChanged,
-                    onSearch = viewModel::onSearch,
-                    onConfirm = viewModel::onAddToQueueConfirm,
-                    onSearchResultSelected = viewModel::onSearchResultSelected,
-                    onDismiss = viewModel::onAddToQueueDismissed,
-                )
-            }
         }
+    }
+
+    if (uiState.addToQueueSheetVisible) {
+        AddToQueueBottomSheet(
+            input = uiState.addToQueueInput,
+            isError = uiState.addToQueueError,
+            isSearching = uiState.isSearching,
+            searchResults = uiState.searchResults,
+            searchError = uiState.searchError,
+            onInputChanged = viewModel::onAddToQueueInputChanged,
+            onSearch = viewModel::onSearch,
+            onConfirm = viewModel::onAddToQueueConfirm,
+            onSearchResultSelected = viewModel::onSearchResultSelected,
+            onDismiss = viewModel::onAddToQueueDismissed,
+        )
     }
 }
 
-// ── Top bar ─────────────────────────────────────────────────────────────────
+// ── Video + responsive layout sections ───────────────────────────────────────
 
 @Composable
 private fun PlayerVideoArea(
@@ -586,7 +599,7 @@ private fun ConnectionStateBanner(connectionState: ConnectionState) {
 @Composable
 private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
     Surface(
-        color = Color.Black.copy(alpha = PLAYER_ERROR_OVERLAY_ALPHA),
+        color = Color.Black.copy(alpha = PLAYER_ERROR_BACKGROUND_ALPHA),
         modifier = Modifier.fillMaxSize(),
     ) {
         Column(
@@ -788,6 +801,7 @@ private fun PlayerOverlayControls(
                 modifier =
                     Modifier
                         .align(Alignment.TopEnd)
+                        .statusBarsPadding()
                         .padding(8.dp),
             ) {
                 Icon(
