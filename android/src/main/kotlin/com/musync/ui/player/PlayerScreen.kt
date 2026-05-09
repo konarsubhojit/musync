@@ -1,6 +1,7 @@
 package com.musync.ui.player
 
 import android.app.Activity
+import android.content.Intent
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
@@ -90,6 +91,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -120,6 +122,31 @@ import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
 private const val PLAYER_ERROR_BACKGROUND_ALPHA = 0.72f
 
+internal fun buildInviteShareMessage(
+    messagePrefix: String,
+    inviteLink: String,
+): String = "$messagePrefix $inviteLink"
+
+private fun shareInviteLink(
+    context: android.content.Context,
+    chooserTitle: String,
+    messagePrefix: String,
+    inviteLink: String,
+) {
+    if (inviteLink.isBlank()) return
+
+    val shareIntent =
+        Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, buildInviteShareMessage(messagePrefix, inviteLink))
+        }
+    val chooserIntent =
+        Intent.createChooser(shareIntent, chooserTitle).apply {
+            if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    context.startActivity(chooserIntent)
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun PlayerScreen(
@@ -129,7 +156,10 @@ fun PlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     var youTubePlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val shareInviteTitle = stringResource(R.string.share_invite)
+    val shareInviteMessagePrefix = stringResource(R.string.player_share_invite_message_prefix)
 
     val inviteLinkCopiedMessage = stringResource(R.string.invite_link_copied)
     LaunchedEffect(uiState.inviteLinkCopied) {
@@ -332,8 +362,12 @@ fun PlayerScreen(
                             viewModel.onInviteLinkCopied()
                         },
                         onShareInvite = {
-                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
-                            viewModel.onInviteLinkCopied()
+                            shareInviteLink(
+                                context = context,
+                                chooserTitle = shareInviteTitle,
+                                messagePrefix = shareInviteMessagePrefix,
+                                inviteLink = uiState.inviteLink,
+                            )
                         },
                         onChatInputChanged = viewModel::onChatInputChanged,
                         onChatMessageSend = viewModel::onChatMessageSend,
@@ -380,8 +414,12 @@ fun PlayerScreen(
                             viewModel.onInviteLinkCopied()
                         },
                         onShareInvite = {
-                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
-                            viewModel.onInviteLinkCopied()
+                            shareInviteLink(
+                                context = context,
+                                chooserTitle = shareInviteTitle,
+                                messagePrefix = shareInviteMessagePrefix,
+                                inviteLink = uiState.inviteLink,
+                            )
                         },
                         onChatInputChanged = viewModel::onChatInputChanged,
                         onChatMessageSend = viewModel::onChatMessageSend,
