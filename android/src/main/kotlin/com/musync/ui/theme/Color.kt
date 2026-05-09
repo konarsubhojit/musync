@@ -22,3 +22,9 @@ val MuSyncOnSecondary = Color(0xFFFFFFFF)
 val MuSyncOnBackground = Color(0xFFFFFFFF)
 val MuSyncOnSurface = Color(0xFFFFFFFF)
 val MuSyncError = Color(0xFFCF6679)
+
+// Light theme palette
+val MuSyncLightBackground = Color(0xFFF7F7F7)
+val MuSyncLightSurface = Color(0xFFFFFFFF)
+val MuSyncLightOnBackground = Color(0xFF111111)
+val MuSyncLightOnSurface = Color(0xFF111111)
