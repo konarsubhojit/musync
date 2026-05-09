@@ -400,6 +400,8 @@ fun PlayerScreen(
         AddToQueueBottomSheet(
             input = uiState.addToQueueInput,
             isError = uiState.addToQueueError,
+            isFetchingVideoInfo = uiState.isFetchingVideoInfo,
+            fetchError = uiState.addToQueueFetchError,
             isSearching = uiState.isSearching,
             searchResults = uiState.searchResults,
             searchError = uiState.searchError,
