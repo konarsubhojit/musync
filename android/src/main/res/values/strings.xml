@@ -67,6 +67,12 @@
     <string name="player_leave_dialog_cancel">Stay</string>
     <string name="player_leave_dialog_end_for_all">End for Everyone</string>
     <string name="player_room_closed_by_host">Room was closed by the host</string>
+    <string name="player_connection_reconnecting">Reconnecting…</string>
+    <string name="player_connection_offline">Offline. Trying to reconnect…</string>
+    <string name="player_video_load_failed">Couldn\'t load this video.</string>
+    <string name="player_try_again">Try Again</string>
+    <string name="player_room_join_failed">Couldn\'t join the room. Please try again.</string>
+    <string name="player_queue_sync_failed">Couldn\'t sync queue changes. We\'ll retry when connection returns.</string>
 
     <!-- Chat -->
     <string name="chat_empty_hint">No messages yet. Say something!</string>

@@ -91,11 +91,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.musync.R
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.ConnectionState
 import com.musync.data.model.Participant
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+
+private const val PLAYER_ERROR_OVERLAY_ALPHA = 0.72f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,6 +132,24 @@ fun PlayerScreen(
                 snackbarHostState.showSnackbar(peerLeftMessage)
             }
             null -> { /* nothing to show */ }
+        }
+    }
+
+    val roomJoinFailedMessage = stringResource(R.string.player_room_join_failed)
+    val queueSyncFailedMessage = stringResource(R.string.player_queue_sync_failed)
+    LaunchedEffect(uiState.transientError) {
+        when (uiState.transientError) {
+            PlayerTransientError.ROOM_JOIN_FAILED -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(roomJoinFailedMessage)
+                viewModel.onTransientErrorShown()
+            }
+            PlayerTransientError.QUEUE_SYNC_FAILED -> {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(queueSyncFailedMessage)
+                viewModel.onTransientErrorShown()
+            }
+            null -> Unit
         }
     }
 
@@ -210,6 +231,7 @@ fun PlayerScreen(
             ) {
                 YouTubePlayerComposable(
                     videoId = uiState.videoId,
+                    reloadNonce = uiState.playerReloadNonce,
                     onPlayerReady = { player -> youTubePlayer = player },
                     onStateChange = { state ->
                         viewModel.onPlaybackStateChanged(
@@ -220,10 +242,15 @@ fun PlayerScreen(
                             viewModel.onTrackEnded()
                         }
                     },
+                    onError = { viewModel.onPlayerError() },
                     onCurrentSecond = viewModel::onCurrentSecond,
                     onDuration = viewModel::onDurationReceived,
                     modifier = Modifier.fillMaxSize(),
                 )
+
+                if (uiState.playerLoadError) {
+                    PlayerErrorOverlay(onTryAgain = viewModel::onRetryVideoLoad)
+                }
 
                 // Tap-catcher to toggle the overlay controls.
                 val tapInteractionSource =
@@ -265,6 +292,7 @@ fun PlayerScreen(
             }
 
             // ── Tab row ──────────────────────────────────────────────────────
+            ConnectionStateBanner(connectionState = uiState.connectionState)
             val tabIndex = if (uiState.selectedTab == PlayerTab.Room) 0 else 1
             TabRow(
                 selectedTabIndex = tabIndex,
@@ -331,6 +359,54 @@ fun PlayerScreen(
                 onSearchResultSelected = viewModel::onSearchResultSelected,
                 onDismiss = viewModel::onAddToQueueDismissed,
             )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStateBanner(connectionState: ConnectionState) {
+    val textRes =
+        when (connectionState) {
+            ConnectionState.CONNECTED -> null
+            ConnectionState.CONNECTING -> R.string.player_connection_reconnecting
+            ConnectionState.DISCONNECTED -> R.string.player_connection_offline
+        } ?: return
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = stringResource(textRes),
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
+    Surface(
+        color = Color.Black.copy(alpha = PLAYER_ERROR_OVERLAY_ALPHA),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.player_video_load_failed),
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onTryAgain) {
+                Text(stringResource(R.string.player_try_again))
+            }
         }
     }
 }

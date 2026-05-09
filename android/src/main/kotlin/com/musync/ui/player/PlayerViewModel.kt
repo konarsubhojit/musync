@@ -14,6 +14,7 @@ import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
+import com.musync.logging.AppLogger
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -97,6 +98,7 @@ class PlayerViewModel
              * long sessions do not grow memory usage or recomposition cost unboundedly.
              */
             internal const val MAX_CHAT_MESSAGES = 200
+            private const val TAG = "PlayerViewModel"
         }
 
         private val _uiState = MutableStateFlow(PlayerUiState())
@@ -221,6 +223,7 @@ class PlayerViewModel
                             // to whatever the repository says is current.
                             videoId = initialVideoId ?: (track?.youtubeVideoId ?: ""),
                             trackTitle = track?.title ?: "",
+                            playerLoadError = false,
                         )
                     }
                 }
@@ -270,6 +273,12 @@ class PlayerViewModel
                             _uiState.update { state ->
                                 state.copy(pendingQueueRequests = state.pendingQueueRequests + (event.trackId to event.trackTitle))
                             }
+                        }
+                        is SyncEvent.ConnectionStateChanged -> {
+                            _uiState.update { it.copy(connectionState = event.state) }
+                        }
+                        is SyncEvent.RoomJoinFailed -> {
+                            _uiState.update { it.copy(transientError = PlayerTransientError.ROOM_JOIN_FAILED) }
                         }
                         is SyncEvent.PlayNext -> loadNextTrack()
                         is SyncEvent.MembersSnapshot -> Unit // count now derived from participants list
@@ -338,7 +347,13 @@ class PlayerViewModel
             isPlaying: Boolean,
             isBuffering: Boolean = false,
         ) {
-            _uiState.update { it.copy(isPlaying = isPlaying, isBuffering = isBuffering) }
+            _uiState.update {
+                it.copy(
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    playerLoadError = if (isPlaying || isBuffering) false else it.playerLoadError,
+                )
+            }
             if (!isHost && !isDemocratic) return
 
             val positionMs = (_uiState.value.currentSecond * 1000).toLong()
@@ -373,6 +388,26 @@ class PlayerViewModel
 
         fun onDurationReceived(duration: Float) {
             _uiState.update { it.copy(duration = duration) }
+        }
+
+        fun onPlayerError() {
+            _uiState.update {
+                it.copy(
+                    playerLoadError = true,
+                    isPlaying = false,
+                    isBuffering = false,
+                )
+            }
+        }
+
+        fun onRetryVideoLoad() {
+            _uiState.update {
+                it.copy(
+                    playerLoadError = false,
+                    isBuffering = true,
+                    playerReloadNonce = it.playerReloadNonce + 1,
+                )
+            }
         }
 
         /**
@@ -808,6 +843,10 @@ class PlayerViewModel
             _uiState.update { it.copy(navigateBack = false, roomClosedByHost = false) }
         }
 
+        fun onTransientErrorShown() {
+            _uiState.update { it.copy(transientError = null) }
+        }
+
         /**
          * Called when the YouTube player signals that the current track has ended.
          * Notifies [SessionRepository] so it can emit [SyncEvent.PlayNext] when the local
@@ -825,7 +864,7 @@ class PlayerViewModel
             if (!isHost) return
             val updatedQueue = _uiState.value.queue.filter { it.id != trackId }
             musicRepository.updateQueue(updatedQueue)
-            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
+            emitQueueUpdatedOrShowError(updatedQueue)
         }
 
         /**
@@ -842,7 +881,7 @@ class PlayerViewModel
             val item = current.removeAt(fromIndex)
             current.add(toIndex, item)
             musicRepository.updateQueue(current)
-            syncEmitter.emitQueueUpdated(roomId, current)
+            emitQueueUpdatedOrShowError(current)
         }
 
         /**
@@ -864,7 +903,22 @@ class PlayerViewModel
             val nextTrack = queue[0]
             val updatedQueue = queue.drop(1)
             musicRepository.updateQueue(updatedQueue)
-            _uiState.update { it.copy(videoId = nextTrack.youtubeVideoId) }
-            syncEmitter.emitQueueUpdated(roomId, updatedQueue)
+            _uiState.update {
+                it.copy(
+                    videoId = nextTrack.youtubeVideoId,
+                    playerLoadError = false,
+                )
+            }
+            emitQueueUpdatedOrShowError(updatedQueue)
+        }
+
+        private fun emitQueueUpdatedOrShowError(updatedQueue: List<Track>) {
+            runCatching { syncEmitter.emitQueueUpdated(roomId, updatedQueue) }
+                .onFailure {
+                    AppLogger.w(TAG, "Queue sync emit failed.")
+                    _uiState.update { state ->
+                        state.copy(transientError = PlayerTransientError.QUEUE_SYNC_FAILED)
+                    }
+                }
         }
     }
