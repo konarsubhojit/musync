@@ -58,6 +58,8 @@
     <string name="player_add_queue_fetch_error">Couldn\'t load video metadata. Please try again.</string>
     <string name="player_remove_from_queue">Remove from queue</string>
     <string name="player_skip_next">Skip to next</string>
+    <string name="player_enter_fullscreen">Enter fullscreen</string>
+    <string name="player_exit_fullscreen">Exit fullscreen</string>
     <string name="player_move_up">Move up</string>
     <string name="player_move_down">Move down</string>
     <string name="player_leave_dialog_title">Leave room?</string>
