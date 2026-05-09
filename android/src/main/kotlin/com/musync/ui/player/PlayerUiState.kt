@@ -1,6 +1,7 @@
 package com.musync.ui.player
 
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.ConnectionState
 import com.musync.data.model.Participant
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
@@ -20,6 +21,11 @@ sealed class PresenceEvent {
     data object PeerLeft : PresenceEvent()
 }
 
+enum class PlayerTransientError {
+    ROOM_JOIN_FAILED,
+    QUEUE_SYNC_FAILED,
+}
+
 data class PlayerUiState(
     val videoId: String = "",
     val trackTitle: String = "",
@@ -27,6 +33,10 @@ data class PlayerUiState(
     val currentSecond: Float = 0f,
     val duration: Float = 0f,
     val isBuffering: Boolean = false,
+    val connectionState: ConnectionState = ConnectionState.CONNECTING,
+    val playerLoadError: Boolean = false,
+    val playerReloadNonce: Int = 0,
+    val transientError: PlayerTransientError? = null,
     val inviteLink: String = "",
     val inviteLinkCopied: Boolean = false,
     /** Currently selected tab below the video. */

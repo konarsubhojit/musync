@@ -28,8 +28,10 @@ import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTube
 @Composable
 fun YouTubePlayerComposable(
     videoId: String,
+    reloadNonce: Int,
     onPlayerReady: (YouTubePlayer) -> Unit,
     onStateChange: (PlayerConstants.PlayerState) -> Unit,
+    onError: (PlayerConstants.PlayerError) -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDuration: (Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -38,7 +40,7 @@ fun YouTubePlayerComposable(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var playerRef by remember { mutableStateOf<YouTubePlayer?>(null) }
-    var loadedVideoId by remember { mutableStateOf("") }
+    var loadedRequestKey by remember { mutableStateOf("") }
 
     val youTubePlayerView =
         remember(context) {
@@ -62,6 +64,13 @@ fun YouTubePlayerComposable(
                             state: PlayerConstants.PlayerState,
                         ) {
                             onStateChange(state)
+                        }
+
+                        override fun onError(
+                            youTubePlayer: YouTubePlayer,
+                            error: PlayerConstants.PlayerError,
+                        ) {
+                            onError(error)
                         }
 
                         override fun onCurrentSecond(
@@ -93,11 +102,12 @@ fun YouTubePlayerComposable(
     }
 
     // Load (or reload) the video whenever the videoId or the player reference changes.
-    LaunchedEffect(videoId, playerRef) {
+    LaunchedEffect(videoId, reloadNonce, playerRef) {
         val player = playerRef
-        if (videoId.isNotEmpty() && player != null && videoId != loadedVideoId) {
+        val requestKey = "$videoId#$reloadNonce"
+        if (videoId.isNotEmpty() && player != null && requestKey != loadedRequestKey) {
             player.loadVideo(videoId, 0f)
-            loadedVideoId = videoId
+            loadedRequestKey = requestKey
         }
     }
 

@@ -110,11 +110,14 @@ import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import com.musync.R
 import com.musync.data.model.ChatMessage
+import com.musync.data.model.ConnectionState
 import com.musync.data.model.Participant
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+
+private const val PLAYER_ERROR_OVERLAY_ALPHA = 0.72f
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
@@ -247,6 +250,8 @@ fun PlayerScreen(
             onTrackEnded = viewModel::onTrackEnded,
             onCurrentSecond = viewModel::onCurrentSecond,
             onDurationReceived = viewModel::onDurationReceived,
+            onPlayerError = viewModel::onPlayerError,
+            onRetryVideoLoad = viewModel::onRetryVideoLoad,
             onUserSeeked = viewModel::onUserSeeked,
             onSkipToNext = viewModel::onSkipToNext,
             canToggleFullscreen = canUseFullscreen,
@@ -295,6 +300,8 @@ fun PlayerScreen(
                         onTrackEnded = viewModel::onTrackEnded,
                         onCurrentSecond = viewModel::onCurrentSecond,
                         onDurationReceived = viewModel::onDurationReceived,
+                        onPlayerError = viewModel::onPlayerError,
+                        onRetryVideoLoad = viewModel::onRetryVideoLoad,
                         onUserSeeked = viewModel::onUserSeeked,
                         onSkipToNext = viewModel::onSkipToNext,
                         canToggleFullscreen = false,
@@ -344,6 +351,8 @@ fun PlayerScreen(
                         onTrackEnded = viewModel::onTrackEnded,
                         onCurrentSecond = viewModel::onCurrentSecond,
                         onDurationReceived = viewModel::onDurationReceived,
+                        onPlayerError = viewModel::onPlayerError,
+                        onRetryVideoLoad = viewModel::onRetryVideoLoad,
                         onUserSeeked = viewModel::onUserSeeked,
                         onSkipToNext = viewModel::onSkipToNext,
                         canToggleFullscreen = canUseFullscreen,
@@ -403,6 +412,8 @@ private fun PlayerVideoArea(
     onTrackEnded: () -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDurationReceived: (Float) -> Unit,
+    onPlayerError: () -> Unit,
+    onRetryVideoLoad: () -> Unit,
     onUserSeeked: (Long) -> Unit,
     onSkipToNext: () -> Unit,
     canToggleFullscreen: Boolean,
@@ -424,6 +435,7 @@ private fun PlayerVideoArea(
         Box(modifier = playbackSurfaceModifier) {
             YouTubePlayerComposable(
                 videoId = uiState.videoId,
+                reloadNonce = uiState.playerReloadNonce,
                 onPlayerReady = onPlayerReady,
                 onStateChange = { state ->
                     onPlaybackStateChanged(
@@ -434,10 +446,15 @@ private fun PlayerVideoArea(
                         onTrackEnded()
                     }
                 },
+                onError = { onPlayerError() },
                 onCurrentSecond = onCurrentSecond,
                 onDuration = onDurationReceived,
                 modifier = Modifier.fillMaxSize(),
             )
+
+            if (uiState.playerLoadError) {
+                PlayerErrorOverlay(onTryAgain = onRetryVideoLoad)
+            }
 
             Box(
                 modifier =
@@ -499,6 +516,7 @@ private fun PlayerTabsSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
+        ConnectionStateBanner(connectionState = uiState.connectionState)
         val tabIndex = if (uiState.selectedTab == PlayerTab.Room) 0 else 1
         TabRow(
             selectedTabIndex = tabIndex,
@@ -539,6 +557,54 @@ private fun PlayerTabsSection(
                         onRemoveTrack = onRemoveFromQueue,
                         onMoveItem = onMoveQueueItem,
                     )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStateBanner(connectionState: ConnectionState) {
+    val textRes =
+        when (connectionState) {
+            ConnectionState.CONNECTED -> null
+            ConnectionState.CONNECTING -> R.string.player_connection_reconnecting
+            ConnectionState.DISCONNECTED -> R.string.player_connection_offline
+        } ?: return
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = stringResource(textRes),
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
+    Surface(
+        color = Color.Black.copy(alpha = PLAYER_ERROR_OVERLAY_ALPHA),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.player_video_load_failed),
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onTryAgain) {
+                Text(stringResource(R.string.player_try_again))
             }
         }
     }
