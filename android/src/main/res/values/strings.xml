@@ -55,6 +55,8 @@
     <string name="player_search_error">Search failed. Check your connection and try again.</string>
     <string name="player_remove_from_queue">Remove from queue</string>
     <string name="player_skip_next">Skip to next</string>
+    <string name="player_enter_fullscreen">Enter fullscreen</string>
+    <string name="player_exit_fullscreen">Exit fullscreen</string>
     <string name="player_move_up">Move up</string>
     <string name="player_move_down">Move down</string>
     <string name="player_leave_dialog_title">Leave room?</string>

@@ -1,10 +1,14 @@
 package com.musync.ui.player
 
+import android.app.Activity
+import android.content.ContextWrapper
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,6 +39,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -68,17 +75,21 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -86,8 +97,16 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import com.musync.R
 import com.musync.data.model.ChatMessage
@@ -97,7 +116,7 @@ import com.musync.data.model.YouTubeSearchResult
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
@@ -172,168 +191,366 @@ fun PlayerScreen(
         )
     }
 
-    Scaffold(
-        topBar = {
-            PlayerTopBar(
-                title = uiState.trackTitle.ifEmpty { stringResource(R.string.app_name) },
-                participantCount = uiState.participants.size.coerceAtLeast(1),
-                onBack = viewModel::onBackPressed,
+    val configuration = LocalConfiguration.current
+    val windowSizeClass =
+        remember(configuration.screenWidthDp, configuration.screenHeightDp) {
+            WindowSizeClass.calculateFromSize(
+                DpSize(
+                    width = configuration.screenWidthDp.dp,
+                    height = configuration.screenHeightDp.dp,
+                ),
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            if (uiState.selectedTab == PlayerTab.Queue) {
-                FloatingActionButton(
-                    onClick = viewModel::onAddToQueueClicked,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.player_add_to_queue))
-                }
-            }
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { paddingValues ->
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-        ) {
-            // ── Video area with overlay controls ─────────────────────────────
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Color.Black)
-                        .aspectRatio(16f / 9f),
-            ) {
-                YouTubePlayerComposable(
-                    videoId = uiState.videoId,
-                    onPlayerReady = { player -> youTubePlayer = player },
-                    onStateChange = { state ->
-                        viewModel.onPlaybackStateChanged(
-                            isPlaying = state == PlayerConstants.PlayerState.PLAYING,
-                            isBuffering = state == PlayerConstants.PlayerState.BUFFERING,
-                        )
-                        if (state == PlayerConstants.PlayerState.ENDED) {
-                            viewModel.onTrackEnded()
-                        }
-                    },
-                    onCurrentSecond = viewModel::onCurrentSecond,
-                    onDuration = viewModel::onDurationReceived,
-                    modifier = Modifier.fillMaxSize(),
-                )
+        }
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val canUseFullscreen = isLandscape && windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
+    var isFullscreenEnabled by rememberSaveable { mutableStateOf(false) }
 
-                // Tap-catcher to toggle the overlay controls.
-                val tapInteractionSource =
-                    remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                Box(
+    LaunchedEffect(canUseFullscreen) {
+        if (canUseFullscreen && !isFullscreenEnabled) {
+            isFullscreenEnabled = true
+        } else if (!canUseFullscreen && isFullscreenEnabled) {
+            isFullscreenEnabled = false
+        }
+    }
+
+    val layoutMode =
+        resolvePlayerLayoutMode(
+            orientation = configuration.orientation,
+            widthSizeClass = windowSizeClass.widthSizeClass,
+            fullscreenEnabled = isFullscreenEnabled,
+        )
+
+    val view = LocalView.current
+    DisposableEffect(layoutMode, view) {
+        val activity = view.context.findActivity()
+        if (activity != null) {
+            val insetsController = WindowCompat.getInsetsController(activity.window, view)
+            if (layoutMode == PlayerLayoutMode.Fullscreen) {
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+            onDispose {
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        } else {
+            onDispose { }
+        }
+    }
+
+    if (layoutMode == PlayerLayoutMode.Fullscreen) {
+        PlayerVideoArea(
+            uiState = uiState,
+            youTubePlayer = youTubePlayer,
+            onPlayerReady = { player -> youTubePlayer = player },
+            onVideoTapped = viewModel::onVideoTapped,
+            onControlsInteraction = viewModel::onControlsInteraction,
+            onPlaybackStateChanged = viewModel::onPlaybackStateChanged,
+            onTrackEnded = viewModel::onTrackEnded,
+            onCurrentSecond = viewModel::onCurrentSecond,
+            onDurationReceived = viewModel::onDurationReceived,
+            onUserSeeked = viewModel::onUserSeeked,
+            onSkipToNext = viewModel::onSkipToNext,
+            canToggleFullscreen = canUseFullscreen,
+            isFullscreen = true,
+            onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
+            fillContainer = true,
+            modifier = Modifier.fillMaxSize(),
+        )
+    } else {
+        Scaffold(
+            topBar = {
+                PlayerTopBar(
+                    title = uiState.trackTitle.ifEmpty { stringResource(R.string.app_name) },
+                    participantCount = uiState.participants.size.coerceAtLeast(1),
+                    onBack = viewModel::onBackPressed,
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            floatingActionButton = {
+                if (uiState.selectedTab == PlayerTab.Queue) {
+                    FloatingActionButton(
+                        onClick = viewModel::onAddToQueueClicked,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.player_add_to_queue))
+                    }
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) { paddingValues ->
+            if (layoutMode == PlayerLayoutMode.TabletSplit) {
+                Row(
                     modifier =
                         Modifier
                             .fillMaxSize()
-                            .clickable(
-                                onClick = viewModel::onVideoTapped,
-                                indication = null,
-                                interactionSource = tapInteractionSource,
-                            ),
-                )
-
-                AnimatedOverlayControls(
-                    visible = uiState.controlsVisible,
-                    isPlaying = uiState.isPlaying,
-                    isBuffering = uiState.isBuffering,
-                    playerReady = youTubePlayer != null,
-                    currentSecond = uiState.currentSecond,
-                    duration = uiState.duration,
-                    canSkip = uiState.isHost && uiState.queue.isNotEmpty(),
-                    onPlayPause = {
-                        val player = youTubePlayer ?: return@AnimatedOverlayControls
-                        viewModel.onControlsInteraction()
-                        if (uiState.isPlaying) player.pause() else player.play()
-                    },
-                    onSeek = { second ->
-                        viewModel.onControlsInteraction()
-                        viewModel.onUserSeeked((second * 1000).toLong())
-                        youTubePlayer?.seekTo(second)
-                    },
-                    onSkipNext = {
-                        viewModel.onControlsInteraction()
-                        viewModel.onSkipToNext()
-                    },
-                )
-            }
-
-            // ── Tab row ──────────────────────────────────────────────────────
-            val tabIndex = if (uiState.selectedTab == PlayerTab.Room) 0 else 1
-            TabRow(
-                selectedTabIndex = tabIndex,
-                containerColor = MaterialTheme.colorScheme.background,
-                contentColor = MaterialTheme.colorScheme.primary,
-            ) {
-                androidx.compose.material3.Tab(
-                    selected = tabIndex == 0,
-                    onClick = { viewModel.onTabSelected(PlayerTab.Room) },
-                    text = { Text(stringResource(R.string.player_tab_room)) },
-                )
-                androidx.compose.material3.Tab(
-                    selected = tabIndex == 1,
-                    onClick = { viewModel.onTabSelected(PlayerTab.Queue) },
-                    text = { Text(stringResource(R.string.player_tab_queue)) },
-                )
-            }
-
-            // ── Tab content ──────────────────────────────────────────────────
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (uiState.selectedTab) {
-                    PlayerTab.Room ->
-                        RoomTab(
-                            inviteLink = uiState.inviteLink,
-                            participants = uiState.participants,
-                            chatMessages = uiState.chatMessages,
-                            chatInput = uiState.chatInput,
-                            typingUsers = uiState.typingUsers,
-                            onCopyInvite = {
-                                clipboardManager.setText(AnnotatedString(uiState.inviteLink))
-                                viewModel.onInviteLinkCopied()
-                            },
-                            onShareInvite = {
-                                clipboardManager.setText(AnnotatedString(uiState.inviteLink))
-                                viewModel.onInviteLinkCopied()
-                            },
-                            onChatInputChanged = viewModel::onChatInputChanged,
-                            onChatMessageSend = viewModel::onChatMessageSend,
-                            onReactionSent = viewModel::onReactionSent,
-                        )
-                    PlayerTab.Queue ->
-                        QueueTab(
-                            queue = uiState.queue,
-                            isHost = uiState.isHost,
-                            onRemoveTrack = viewModel::onRemoveFromQueue,
-                            onMoveItem = viewModel::onMoveQueueItem,
-                        )
+                            .padding(paddingValues),
+                ) {
+                    PlayerVideoArea(
+                        uiState = uiState,
+                        youTubePlayer = youTubePlayer,
+                        onPlayerReady = { player -> youTubePlayer = player },
+                        onVideoTapped = viewModel::onVideoTapped,
+                        onControlsInteraction = viewModel::onControlsInteraction,
+                        onPlaybackStateChanged = viewModel::onPlaybackStateChanged,
+                        onTrackEnded = viewModel::onTrackEnded,
+                        onCurrentSecond = viewModel::onCurrentSecond,
+                        onDurationReceived = viewModel::onDurationReceived,
+                        onUserSeeked = viewModel::onUserSeeked,
+                        onSkipToNext = viewModel::onSkipToNext,
+                        canToggleFullscreen = false,
+                        isFullscreen = false,
+                        onToggleFullscreen = {},
+                        modifier =
+                            Modifier
+                                .weight(1.2f)
+                                .fillMaxHeight(),
+                    )
+                    PlayerTabsSection(
+                        uiState = uiState,
+                        onTabSelected = viewModel::onTabSelected,
+                        onCopyInvite = {
+                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
+                            viewModel.onInviteLinkCopied()
+                        },
+                        onShareInvite = {
+                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
+                            viewModel.onInviteLinkCopied()
+                        },
+                        onChatInputChanged = viewModel::onChatInputChanged,
+                        onChatMessageSend = viewModel::onChatMessageSend,
+                        onReactionSent = viewModel::onReactionSent,
+                        onRemoveFromQueue = viewModel::onRemoveFromQueue,
+                        onMoveQueueItem = viewModel::onMoveQueueItem,
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                    )
+                }
+            } else {
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(paddingValues),
+                ) {
+                    PlayerVideoArea(
+                        uiState = uiState,
+                        youTubePlayer = youTubePlayer,
+                        onPlayerReady = { player -> youTubePlayer = player },
+                        onVideoTapped = viewModel::onVideoTapped,
+                        onControlsInteraction = viewModel::onControlsInteraction,
+                        onPlaybackStateChanged = viewModel::onPlaybackStateChanged,
+                        onTrackEnded = viewModel::onTrackEnded,
+                        onCurrentSecond = viewModel::onCurrentSecond,
+                        onDurationReceived = viewModel::onDurationReceived,
+                        onUserSeeked = viewModel::onUserSeeked,
+                        onSkipToNext = viewModel::onSkipToNext,
+                        canToggleFullscreen = canUseFullscreen,
+                        isFullscreen = false,
+                        onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    PlayerTabsSection(
+                        uiState = uiState,
+                        onTabSelected = viewModel::onTabSelected,
+                        onCopyInvite = {
+                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
+                            viewModel.onInviteLinkCopied()
+                        },
+                        onShareInvite = {
+                            clipboardManager.setText(AnnotatedString(uiState.inviteLink))
+                            viewModel.onInviteLinkCopied()
+                        },
+                        onChatInputChanged = viewModel::onChatInputChanged,
+                        onChatMessageSend = viewModel::onChatMessageSend,
+                        onReactionSent = viewModel::onReactionSent,
+                        onRemoveFromQueue = viewModel::onRemoveFromQueue,
+                        onMoveQueueItem = viewModel::onMoveQueueItem,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
-        }
 
-        if (uiState.addToQueueSheetVisible) {
-            AddToQueueBottomSheet(
-                input = uiState.addToQueueInput,
-                isError = uiState.addToQueueError,
-                isSearching = uiState.isSearching,
-                searchResults = uiState.searchResults,
-                searchError = uiState.searchError,
-                onInputChanged = viewModel::onAddToQueueInputChanged,
-                onSearch = viewModel::onSearch,
-                onConfirm = viewModel::onAddToQueueConfirm,
-                onSearchResultSelected = viewModel::onSearchResultSelected,
-                onDismiss = viewModel::onAddToQueueDismissed,
-            )
+            if (uiState.addToQueueSheetVisible) {
+                AddToQueueBottomSheet(
+                    input = uiState.addToQueueInput,
+                    isError = uiState.addToQueueError,
+                    isSearching = uiState.isSearching,
+                    searchResults = uiState.searchResults,
+                    searchError = uiState.searchError,
+                    onInputChanged = viewModel::onAddToQueueInputChanged,
+                    onSearch = viewModel::onSearch,
+                    onConfirm = viewModel::onAddToQueueConfirm,
+                    onSearchResultSelected = viewModel::onSearchResultSelected,
+                    onDismiss = viewModel::onAddToQueueDismissed,
+                )
+            }
         }
     }
 }
 
 // ── Top bar ─────────────────────────────────────────────────────────────────
+
+@Composable
+private fun PlayerVideoArea(
+    uiState: PlayerUiState,
+    youTubePlayer: YouTubePlayer?,
+    onPlayerReady: (YouTubePlayer) -> Unit,
+    onVideoTapped: () -> Unit,
+    onControlsInteraction: () -> Unit,
+    onPlaybackStateChanged: (isPlaying: Boolean, isBuffering: Boolean) -> Unit,
+    onTrackEnded: () -> Unit,
+    onCurrentSecond: (Float) -> Unit,
+    onDurationReceived: (Float) -> Unit,
+    onUserSeeked: (Long) -> Unit,
+    onSkipToNext: () -> Unit,
+    canToggleFullscreen: Boolean,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    modifier: Modifier = Modifier,
+    fillContainer: Boolean = false,
+) {
+    Box(
+        modifier =
+            modifier
+                .background(Color.Black),
+    ) {
+        val playbackSurfaceModifier =
+            if (fillContainer) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .align(Alignment.Center)
+            }
+        Box(modifier = playbackSurfaceModifier) {
+            YouTubePlayerComposable(
+                videoId = uiState.videoId,
+                onPlayerReady = onPlayerReady,
+                onStateChange = { state ->
+                    onPlaybackStateChanged(
+                        state == PlayerConstants.PlayerState.PLAYING,
+                        state == PlayerConstants.PlayerState.BUFFERING,
+                    )
+                    if (state == PlayerConstants.PlayerState.ENDED) {
+                        onTrackEnded()
+                    }
+                },
+                onCurrentSecond = onCurrentSecond,
+                onDuration = onDurationReceived,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(canToggleFullscreen) {
+                            detectTapGestures(
+                                onTap = { onVideoTapped() },
+                                onDoubleTap = {
+                                    if (canToggleFullscreen) {
+                                        onToggleFullscreen()
+                                    }
+                                },
+                            )
+                        },
+            )
+
+            AnimatedOverlayControls(
+                visible = uiState.controlsVisible,
+                isPlaying = uiState.isPlaying,
+                isBuffering = uiState.isBuffering,
+                playerReady = youTubePlayer != null,
+                currentSecond = uiState.currentSecond,
+                duration = uiState.duration,
+                canSkip = uiState.isHost && uiState.queue.isNotEmpty(),
+                canToggleFullscreen = canToggleFullscreen,
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = onToggleFullscreen,
+                onPlayPause = {
+                    val player = youTubePlayer ?: return@AnimatedOverlayControls
+                    onControlsInteraction()
+                    if (uiState.isPlaying) player.pause() else player.play()
+                },
+                onSeek = { second ->
+                    onControlsInteraction()
+                    onUserSeeked((second * 1000).toLong())
+                    youTubePlayer?.seekTo(second)
+                },
+                onSkipNext = {
+                    onControlsInteraction()
+                    onSkipToNext()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerTabsSection(
+    uiState: PlayerUiState,
+    onTabSelected: (PlayerTab) -> Unit,
+    onCopyInvite: () -> Unit,
+    onShareInvite: () -> Unit,
+    onChatInputChanged: (String) -> Unit,
+    onChatMessageSend: () -> Unit,
+    onReactionSent: (String) -> Unit,
+    onRemoveFromQueue: (String) -> Unit,
+    onMoveQueueItem: (Int, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        val tabIndex = if (uiState.selectedTab == PlayerTab.Room) 0 else 1
+        TabRow(
+            selectedTabIndex = tabIndex,
+            containerColor = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.primary,
+        ) {
+            androidx.compose.material3.Tab(
+                selected = tabIndex == 0,
+                onClick = { onTabSelected(PlayerTab.Room) },
+                text = { Text(stringResource(R.string.player_tab_room)) },
+            )
+            androidx.compose.material3.Tab(
+                selected = tabIndex == 1,
+                onClick = { onTabSelected(PlayerTab.Queue) },
+                text = { Text(stringResource(R.string.player_tab_queue)) },
+            )
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            when (uiState.selectedTab) {
+                PlayerTab.Room ->
+                    RoomTab(
+                        inviteLink = uiState.inviteLink,
+                        participants = uiState.participants,
+                        chatMessages = uiState.chatMessages,
+                        chatInput = uiState.chatInput,
+                        typingUsers = uiState.typingUsers,
+                        onCopyInvite = onCopyInvite,
+                        onShareInvite = onShareInvite,
+                        onChatInputChanged = onChatInputChanged,
+                        onChatMessageSend = onChatMessageSend,
+                        onReactionSent = onReactionSent,
+                    )
+                PlayerTab.Queue ->
+                    QueueTab(
+                        queue = uiState.queue,
+                        isHost = uiState.isHost,
+                        onRemoveTrack = onRemoveFromQueue,
+                        onMoveItem = onMoveQueueItem,
+                    )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -457,6 +674,9 @@ private fun AnimatedOverlayControls(
     currentSecond: Float,
     duration: Float,
     canSkip: Boolean,
+    canToggleFullscreen: Boolean,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onSkipNext: () -> Unit,
@@ -473,6 +693,9 @@ private fun AnimatedOverlayControls(
             currentSecond = currentSecond,
             duration = duration,
             canSkip = canSkip,
+            canToggleFullscreen = canToggleFullscreen,
+            isFullscreen = isFullscreen,
+            onToggleFullscreen = onToggleFullscreen,
             onPlayPause = onPlayPause,
             onSeek = onSeek,
             onSkipNext = onSkipNext,
@@ -488,11 +711,35 @@ private fun PlayerOverlayControls(
     currentSecond: Float,
     duration: Float,
     canSkip: Boolean,
+    canToggleFullscreen: Boolean,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onSkipNext: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
+        if (canToggleFullscreen) {
+            IconButton(
+                onClick = onToggleFullscreen,
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+            ) {
+                Icon(
+                    imageVector = if (isFullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                    contentDescription =
+                        if (isFullscreen) {
+                            stringResource(R.string.player_exit_fullscreen)
+                        } else {
+                            stringResource(R.string.player_enter_fullscreen)
+                        },
+                    tint = Color.White,
+                )
+            }
+        }
+
         // Centred play/pause (or loading) button — YouTube-style.
         Row(
             modifier = Modifier.align(Alignment.Center),
@@ -1206,3 +1453,10 @@ private fun formatSeconds(seconds: Float): String {
     val secs = total % 60
     return "%d:%02d".format(minutes, secs)
 }
+
+private tailrec fun android.content.Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
