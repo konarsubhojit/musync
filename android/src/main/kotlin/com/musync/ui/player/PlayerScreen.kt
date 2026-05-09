@@ -206,11 +206,7 @@ fun PlayerScreen(
     var isFullscreenEnabled by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(canUseFullscreen) {
-        if (canUseFullscreen && !isFullscreenEnabled) {
-            isFullscreenEnabled = true
-        } else if (!canUseFullscreen && isFullscreenEnabled) {
-            isFullscreenEnabled = false
-        }
+        isFullscreenEnabled = canUseFullscreen
     }
 
     val layoutMode =
@@ -223,20 +219,20 @@ fun PlayerScreen(
     val view = LocalView.current
     DisposableEffect(layoutMode, view) {
         val activity = view.context.findActivity()
-        if (activity != null) {
-            val insetsController = WindowCompat.getInsetsController(activity.window, view)
-            if (layoutMode == PlayerLayoutMode.Fullscreen) {
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                insetsController.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
-            }
-            onDispose {
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
-            }
+        if (activity == null) {
+            return@DisposableEffect onDispose { }
+        }
+
+        val insetsController = WindowCompat.getInsetsController(activity.window, view)
+        if (layoutMode == PlayerLayoutMode.Fullscreen) {
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
         } else {
-            onDispose { }
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -415,11 +411,7 @@ private fun PlayerVideoArea(
     modifier: Modifier = Modifier,
     fillContainer: Boolean = false,
 ) {
-    Box(
-        modifier =
-            modifier
-                .background(Color.Black),
-    ) {
+    Box(modifier = modifier.background(Color.Black)) {
         val playbackSurfaceModifier =
             if (fillContainer) {
                 Modifier.fillMaxSize()
@@ -718,7 +710,12 @@ private fun PlayerOverlayControls(
     onSeek: (Float) -> Unit,
     onSkipNext: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f)),
+    ) {
         if (canToggleFullscreen) {
             IconButton(
                 onClick = onToggleFullscreen,
