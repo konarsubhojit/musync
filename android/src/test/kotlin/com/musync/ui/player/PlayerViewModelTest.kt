@@ -2,13 +2,14 @@ package com.musync.ui.player
 
 import androidx.lifecycle.SavedStateHandle
 import com.musync.data.model.Participant
+import com.musync.data.model.ConnectionState
 import com.musync.data.model.PlayerState
 import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
-import com.musync.data.model.ConnectionState
+import com.musync.data.model.YouTubeVideoInfo
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
@@ -690,8 +691,12 @@ class PlayerViewModelTest {
                 object : MusicRepository {
                     override val currentTrack: Flow<Track?> = MutableStateFlow(null)
                     override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+
                     override fun updateQueue(tracks: List<Track>) = Unit
-                    override fun addToQueue(track: Track) { addedTrack = track }
+
+                    override fun addToQueue(track: Track) {
+                        addedTrack = track
+                    }
                 }
             val viewModel = buildHostViewModel(musicRepository = musicRepo)
             viewModel.onAddToQueueClicked()
@@ -736,14 +741,61 @@ class PlayerViewModelTest {
     @Test
     fun `onAddToQueueConfirm resets search state on success`() =
         runTest {
-            val repo = FakeYouTubeSearchRepository(result = Result.success(listOf(sampleSearchResult)))
-            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            val repo =
+                FakeYouTubeSearchRepository(
+                    result = Result.success(listOf(sampleSearchResult)),
+                    videoInfoResult =
+                        Result.success(
+                            YouTubeVideoInfo(
+                                videoId = "jNQXAC9IVRw",
+                                title = "Me at the zoo",
+                                channelTitle = "jawed",
+                            ),
+                        ),
+                )
+            var addedTrack: Track? = null
+            val musicRepo =
+                object : MusicRepository {
+                    override val currentTrack: Flow<Track?> = MutableStateFlow(null)
+                    override val queue: Flow<List<Track>> = MutableStateFlow(emptyList())
+
+                    override fun updateQueue(tracks: List<Track>) = Unit
+
+                    override fun addToQueue(track: Track) {
+                        addedTrack = track
+                    }
+                }
+            val viewModel = buildHostViewModel(musicRepository = musicRepo, youTubeSearchRepository = repo)
             viewModel.onAddToQueueInputChanged("https://youtu.be/jNQXAC9IVRw")
             viewModel.onSearch()
             advanceUntilIdle()
             viewModel.onAddToQueueConfirm()
+            advanceUntilIdle()
+            assertNotNull(addedTrack)
+            assertEquals("Me at the zoo", addedTrack!!.title)
+            assertEquals("jawed", addedTrack!!.artist)
             assertTrue(viewModel.uiState.value.searchResults.isEmpty())
             assertFalse(viewModel.uiState.value.addToQueueSheetVisible)
+            assertFalse(viewModel.uiState.value.isFetchingVideoInfo)
+            assertFalse(viewModel.uiState.value.addToQueueFetchError)
+        }
+
+    @Test
+    fun `onAddToQueueConfirm sets fetch error when metadata lookup fails`() =
+        runTest {
+            val repo =
+                FakeYouTubeSearchRepository(
+                    videoInfoResult = Result.failure(Exception("metadata failure")),
+                )
+            val viewModel = buildHostViewModel(youTubeSearchRepository = repo)
+            viewModel.onAddToQueueClicked()
+            viewModel.onAddToQueueInputChanged("https://youtu.be/jNQXAC9IVRw")
+            viewModel.onAddToQueueConfirm()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertTrue(state.addToQueueSheetVisible)
+            assertTrue(state.addToQueueFetchError)
+            assertFalse(state.isFetchingVideoInfo)
         }
 
     // --- Queue management ---
@@ -1109,8 +1161,18 @@ class PlayerViewModelTest {
 
     private class FakeYouTubeSearchRepository(
         private val result: Result<List<YouTubeSearchResult>> = Result.success(emptyList()),
+        private val videoInfoResult: Result<YouTubeVideoInfo> =
+            Result.success(
+                YouTubeVideoInfo(
+                    videoId = "abc123",
+                    title = "A great song",
+                    channelTitle = "Great Channel",
+                ),
+            ),
     ) : YouTubeSearchRepository {
         override suspend fun search(query: String): Result<List<YouTubeSearchResult>> = result
+
+        override suspend fun fetchVideoInfo(videoId: String): Result<YouTubeVideoInfo> = videoInfoResult
     }
 
     private class FakeUserPreferencesRepository(

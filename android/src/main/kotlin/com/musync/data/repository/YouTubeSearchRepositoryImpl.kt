@@ -2,12 +2,14 @@ package com.musync.data.repository
 
 import com.musync.BuildConfig
 import com.musync.data.model.YouTubeSearchResult
+import com.musync.data.model.YouTubeVideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.LinkedHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,6 +19,8 @@ class YouTubeSearchRepositoryImpl
     constructor(
         private val okHttpClient: OkHttpClient,
     ) : YouTubeSearchRepository {
+        private val videoInfoCache = LinkedHashMap<String, YouTubeVideoInfo>(MAX_VIDEO_INFO_CACHE_SIZE, 0.75f, true)
+
         override suspend fun search(query: String): Result<List<YouTubeSearchResult>> =
             withContext(Dispatchers.IO) {
                 try {
@@ -54,4 +58,60 @@ class YouTubeSearchRepositoryImpl
                     Result.failure(e)
                 }
             }
+
+        override suspend fun fetchVideoInfo(videoId: String): Result<YouTubeVideoInfo> =
+            withContext(Dispatchers.IO) {
+                val cached = getCachedVideoInfo(videoId)
+                if (cached != null) {
+                    return@withContext Result.success(cached)
+                }
+                try {
+                    val url = "${BuildConfig.SERVER_URL}/api/youtube/video-info/$videoId"
+                    val request = Request.Builder().url(url).get().build()
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            return@withContext Result.failure(
+                                Exception("Video info request failed with status ${response.code}"),
+                            )
+                        }
+                        val body =
+                            response.body?.string()
+                                ?: return@withContext Result.failure(Exception("Empty response body"))
+                        val item = JSONObject(body)
+                        val info =
+                            YouTubeVideoInfo(
+                                videoId = item.getString("videoId"),
+                                title = item.getString("title"),
+                                channelTitle = item.optString("channelTitle"),
+                            )
+                        putCachedVideoInfo(videoId, info)
+                        Result.success(info)
+                    }
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+
+        private fun getCachedVideoInfo(videoId: String): YouTubeVideoInfo? =
+            synchronized(videoInfoCache) {
+                videoInfoCache[videoId]
+            }
+
+        private fun putCachedVideoInfo(
+            videoId: String,
+            info: YouTubeVideoInfo,
+        ) {
+            synchronized(videoInfoCache) {
+                videoInfoCache.remove(videoId)
+                while (videoInfoCache.size >= MAX_VIDEO_INFO_CACHE_SIZE) {
+                    val iterator = videoInfoCache.entries.iterator()
+                    if (!iterator.hasNext()) break
+                    iterator.next()
+                    iterator.remove()
+                }
+                videoInfoCache[videoId] = info
+            }
+        }
     }
+
+private const val MAX_VIDEO_INFO_CACHE_SIZE = 500

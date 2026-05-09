@@ -6,6 +6,14 @@ data class CreateRoomUiState(
     val urlInput: String = "",
     /** Parsed video ID; non-null when [urlInput] resolves to a valid YouTube video. */
     val videoId: String? = null,
+    /** Resolved YouTube title for [videoId], when metadata fetch succeeds. */
+    val videoTitle: String? = null,
+    /** Resolved channel name for [videoId], when metadata fetch succeeds. */
+    val channelTitle: String? = null,
+    /** True while metadata for [videoId] is being fetched from the server. */
+    val isFetchingVideoInfo: Boolean = false,
+    /** True when metadata lookup failed for the current [videoId]. */
+    val videoInfoError: Boolean = false,
     /** True when the user has typed something but it has not parsed to a video ID. */
     val urlError: Boolean = false,
     /** Optional display name entered by the user. */

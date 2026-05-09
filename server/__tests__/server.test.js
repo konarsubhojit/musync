@@ -196,6 +196,106 @@ describe('MuSync server', () => {
     });
   });
 
+  // ── YouTube video-info proxy ──────────────────────────────────────────────
+  describe('GET /api/youtube/video-info/:videoId', () => {
+    const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalVideoInfoTimeout = process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS;
+    const originalVideoInfoCacheSize = process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE;
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
+      else process.env.YOUTUBE_API_KEY = originalApiKey;
+      if (originalVideoInfoTimeout === undefined) delete process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS;
+      else process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS = originalVideoInfoTimeout;
+      if (originalVideoInfoCacheSize === undefined) delete process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE;
+      else process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE = originalVideoInfoCacheSize;
+      global.fetch = originalFetch;
+    });
+
+    it('returns 503 when YOUTUBE_API_KEY is not configured', async () => {
+      delete process.env.YOUTUBE_API_KEY;
+      const res = await request(app).get('/api/youtube/video-info/jNQXAC9IVRw');
+      expect(res.status).toBe(503);
+    });
+
+    it('returns 400 for an invalid videoId', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      const res = await request(app).get('/api/youtube/video-info/not-valid');
+      expect(res.status).toBe(400);
+    });
+
+    it('returns mapped metadata for a valid videoId', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              snippet: {
+                title: 'Me at the zoo',
+                channelTitle: 'jawed',
+              },
+            },
+          ],
+        }),
+      });
+
+      const res = await request(app).get('/api/youtube/video-info/AAAAAAAAAAA');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        videoId: 'AAAAAAAAAAA',
+        title: 'Me at the zoo',
+        channelTitle: 'jawed',
+      });
+    });
+
+    it('serves repeated requests from cache', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              snippet: {
+                title: 'Cached title',
+                channelTitle: 'Cached channel',
+              },
+            },
+          ],
+        }),
+      });
+
+      const first = await request(app).get('/api/youtube/video-info/BBBBBBBBBBB');
+      const second = await request(app).get('/api/youtube/video-info/BBBBBBBBBBB');
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(second.body.title).toBe('Cached title');
+    });
+
+    it('evicts oldest entry when cache size limit is reached', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE = '1';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [{ snippet: { title: 'Title', channelTitle: 'Channel' } }],
+        }),
+      });
+
+      const first = await request(app).get('/api/youtube/video-info/CCCCCCCCCCC');
+      const second = await request(app).get('/api/youtube/video-info/DDDDDDDDDDD');
+      const firstAgain = await request(app).get('/api/youtube/video-info/CCCCCCCCCCC');
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(firstAgain.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+  });
+
   // ── Socket.IO helpers ─────────────────────────────────────────────────────
   function connect() {
     return new Promise((resolve) => {

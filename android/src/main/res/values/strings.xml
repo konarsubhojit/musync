@@ -34,6 +34,8 @@
     <string name="create_room_default_name_prefix">Listener</string>
     <string name="create_room_start">Start Room</string>
     <string name="create_room_back">Back</string>
+    <string name="video_info_loading">Fetching video details…</string>
+    <string name="video_info_error">Couldn\'t load video metadata. Showing the video ID instead.</string>
 
     <!-- Player screen -->
     <string name="player_back">Back</string>
@@ -53,6 +55,7 @@
     <string name="player_search_youtube">Search YouTube</string>
     <string name="player_search_results">Search results</string>
     <string name="player_search_error">Search failed. Check your connection and try again.</string>
+    <string name="player_add_queue_fetch_error">Couldn\'t load video metadata. Please try again.</string>
     <string name="player_remove_from_queue">Remove from queue</string>
     <string name="player_skip_next">Skip to next</string>
     <string name="player_enter_fullscreen">Enter fullscreen</string>
