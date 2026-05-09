@@ -9,7 +9,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.LinkedHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,7 +20,13 @@ class YouTubeSearchRepositoryImpl
     constructor(
         private val okHttpClient: OkHttpClient,
     ) : YouTubeSearchRepository {
-        private val videoInfoCache = ConcurrentHashMap<String, YouTubeVideoInfo>()
+        private val videoInfoCache =
+            Collections.synchronizedMap(
+                object : LinkedHashMap<String, YouTubeVideoInfo>(MAX_VIDEO_INFO_CACHE_SIZE + 1, 0.75f, true) {
+                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, YouTubeVideoInfo>?): Boolean =
+                        size > MAX_VIDEO_INFO_CACHE_SIZE
+                },
+            )
 
         override suspend fun search(query: String): Result<List<YouTubeSearchResult>> =
             withContext(Dispatchers.IO) {
@@ -92,3 +99,5 @@ class YouTubeSearchRepositoryImpl
                 }
             }
     }
+
+private const val MAX_VIDEO_INFO_CACHE_SIZE = 500

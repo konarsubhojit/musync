@@ -43,6 +43,20 @@ function createApp(options = {}) {
     return /^[A-Za-z0-9_-]{11}$/.test(videoId);
   }
 
+  function getVideoInfoCacheMaxSize() {
+    return Math.max(1, parseInt(process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE ?? '500', 10));
+  }
+
+  function setVideoInfoCache(videoId, payload) {
+    const maxSize = getVideoInfoCacheMaxSize();
+    while (!videoInfoCache.has(videoId) && videoInfoCache.size >= maxSize) {
+      const oldestKey = videoInfoCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      videoInfoCache.delete(oldestKey);
+    }
+    videoInfoCache.set(videoId, payload);
+  }
+
   // ── Health check ──────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
@@ -72,7 +86,10 @@ function createApp(options = {}) {
       res.status(400).json({ error: 'Search query too long' });
       return;
     }
-    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const timeoutMs = parseInt(
+      process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS ?? process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000',
+      10,
+    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -114,6 +131,11 @@ function createApp(options = {}) {
   // GET /api/youtube/video-info/:videoId
   // Returns title/channel metadata for a single video. Results are cached in
   // memory to avoid repeated lookups while the process is running.
+  //
+  // Configuration (env vars):
+  //   YOUTUBE_VIDEO_INFO_TIMEOUT_MS  Fetch timeout in ms (default: fallback to
+  //                                  YOUTUBE_SEARCH_TIMEOUT_MS, then 8000).
+  //   YOUTUBE_VIDEO_INFO_CACHE_SIZE  Max in-memory cached items (default: 500).
   app.get('/api/youtube/video-info/:videoId', async (req, res) => {
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
@@ -159,7 +181,7 @@ function createApp(options = {}) {
         title: item.snippet.title,
         channelTitle: item.snippet.channelTitle ?? 'YouTube',
       };
-      videoInfoCache.set(videoId, payload);
+      setVideoInfoCache(videoId, payload);
       res.json(payload);
     } catch (err) {
       if (err.name === 'AbortError') {

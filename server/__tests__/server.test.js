@@ -199,11 +199,17 @@ describe('MuSync server', () => {
   // ── YouTube video-info proxy ──────────────────────────────────────────────
   describe('GET /api/youtube/video-info/:videoId', () => {
     const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalVideoInfoTimeout = process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS;
+    const originalVideoInfoCacheSize = process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE;
     const originalFetch = global.fetch;
 
     afterEach(() => {
       if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
       else process.env.YOUTUBE_API_KEY = originalApiKey;
+      if (originalVideoInfoTimeout === undefined) delete process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS;
+      else process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS = originalVideoInfoTimeout;
+      if (originalVideoInfoCacheSize === undefined) delete process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE;
+      else process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE = originalVideoInfoCacheSize;
       global.fetch = originalFetch;
     });
 
@@ -267,6 +273,26 @@ describe('MuSync server', () => {
       expect(second.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledTimes(1);
       expect(second.body.title).toBe('Cached title');
+    });
+
+    it('evicts oldest entry when cache size limit is reached', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      process.env.YOUTUBE_VIDEO_INFO_CACHE_SIZE = '1';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [{ snippet: { title: 'Title', channelTitle: 'Channel' } }],
+        }),
+      });
+
+      const first = await request(app).get('/api/youtube/video-info/CCCCCCCCCCC');
+      const second = await request(app).get('/api/youtube/video-info/DDDDDDDDDDD');
+      const firstAgain = await request(app).get('/api/youtube/video-info/CCCCCCCCCCC');
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(firstAgain.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
     });
   });
 
