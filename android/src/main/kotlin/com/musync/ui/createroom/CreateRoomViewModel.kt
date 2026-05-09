@@ -59,6 +59,7 @@ class CreateRoomViewModel
         /** Called whenever the URL field text changes.  Re-parses and updates validation. */
         fun onUrlChanged(input: String) {
             videoInfoJob?.cancel()
+            videoInfoJob = null
             val videoId = YouTubeUrlParser.extractVideoId(input)
             _uiState.update {
                 it.copy(

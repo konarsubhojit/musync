@@ -120,6 +120,9 @@ class PlayerViewModel
         /** Tracks the active YouTube search coroutine so rapid calls cancel stale requests. */
         private var searchJob: Job? = null
 
+        /** Tracks the active metadata fetch for add-to-queue URL confirmation. */
+        private var videoInfoJob: Job? = null
+
         /**
          * `true` only when the local player was most recently in a PLAYING state.
          * Used to distinguish a genuine PAUSED transition from non-playing states like
@@ -312,6 +315,7 @@ class PlayerViewModel
             super.onCleared()
             stopHeartbeat()
             playbackSyncReceiver.stopListening()
+            videoInfoJob?.cancel()
             // Emit leave_room whenever the ViewModel is destroyed (e.g. system back
             // gesture that bypasses the confirmation dialog).
             sessionRepository.leaveSession()
@@ -588,6 +592,8 @@ class PlayerViewModel
 
         /** Opens the "Add to queue" bottom sheet. */
         fun onAddToQueueClicked() {
+            videoInfoJob?.cancel()
+            videoInfoJob = null
             _uiState.update {
                 it.copy(
                     addToQueueSheetVisible = true,
@@ -606,6 +612,8 @@ class PlayerViewModel
         fun onAddToQueueDismissed() {
             searchJob?.cancel()
             searchJob = null
+            videoInfoJob?.cancel()
+            videoInfoJob = null
             _uiState.update {
                 it.copy(
                     addToQueueSheetVisible = false,
@@ -621,6 +629,8 @@ class PlayerViewModel
 
         /** Updates the input field of the bottom sheet. */
         fun onAddToQueueInputChanged(value: String) {
+            videoInfoJob?.cancel()
+            videoInfoJob = null
             _uiState.update {
                 it.copy(
                     addToQueueInput = value,
@@ -644,6 +654,8 @@ class PlayerViewModel
             }
             searchJob?.cancel()
             searchJob = null
+            videoInfoJob?.cancel()
+            videoInfoJob = null
             _uiState.update {
                 it.copy(
                     addToQueueError = false,
@@ -651,7 +663,8 @@ class PlayerViewModel
                     isFetchingVideoInfo = true,
                 )
             }
-            viewModelScope.launch {
+            videoInfoJob =
+                viewModelScope.launch {
                 val result = youTubeSearchRepository.fetchVideoInfo(videoId)
                 result.fold(
                     onSuccess = { info ->
@@ -729,6 +742,8 @@ class PlayerViewModel
         fun onSearchResultSelected(result: YouTubeSearchResult) {
             searchJob?.cancel()
             searchJob = null
+            videoInfoJob?.cancel()
+            videoInfoJob = null
             musicRepository.addToQueue(
                 Track(
                     id = UUID.randomUUID().toString(),
