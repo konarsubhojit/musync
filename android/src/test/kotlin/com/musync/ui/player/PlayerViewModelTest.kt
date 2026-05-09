@@ -8,6 +8,7 @@ import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
+import com.musync.data.model.ConnectionState
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
@@ -286,6 +287,30 @@ class PlayerViewModelTest {
             advanceUntilIdle()
             assertTrue(viewModel.uiState.value.roomClosedByHost)
             assertTrue(viewModel.uiState.value.navigateBack)
+        }
+
+    @Test
+    fun `ConnectionStateChanged updates connection state in uiState`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitConnectionState(ConnectionState.DISCONNECTED)
+            advanceUntilIdle()
+            assertEquals(ConnectionState.DISCONNECTED, viewModel.uiState.value.connectionState)
+        }
+
+    @Test
+    fun `RoomJoinFailed sets transient room join error`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel = buildHostViewModel(sessionRepository = sessionRepo)
+            advanceUntilIdle()
+            sessionRepo.emitRoomJoinFailed()
+            advanceUntilIdle()
+            assertEquals(PlayerTransientError.ROOM_JOIN_FAILED, viewModel.uiState.value.transientError)
+            viewModel.onTransientErrorShown()
+            assertNull(viewModel.uiState.value.transientError)
         }
 
     // --- Host sync emission ---
@@ -767,6 +792,32 @@ class PlayerViewModelTest {
         }
 
     @Test
+    fun `queue sync failure sets transient queue sync error`() =
+        runTest {
+            val track = sampleTrack
+            val repo = FakeMusicRepository(initialQueue = listOf(track))
+            val emitter = mockk<SyncEmitter>()
+            io.mockk.every { emitter.emitQueueUpdated(any(), any()) } throws RuntimeException("network")
+            val viewModel = buildHostViewModel(musicRepository = repo, syncEmitter = emitter)
+            advanceUntilIdle()
+            viewModel.onRemoveFromQueue(track.id)
+            assertEquals(PlayerTransientError.QUEUE_SYNC_FAILED, viewModel.uiState.value.transientError)
+        }
+
+    @Test
+    fun `player error state toggles on onPlayerError and onRetryVideoLoad`() =
+        runTest {
+            val viewModel = buildHostViewModel()
+            assertFalse(viewModel.uiState.value.playerLoadError)
+            val beforeRetryNonce = viewModel.uiState.value.playerReloadNonce
+            viewModel.onPlayerError()
+            assertTrue(viewModel.uiState.value.playerLoadError)
+            viewModel.onRetryVideoLoad()
+            assertFalse(viewModel.uiState.value.playerLoadError)
+            assertEquals(beforeRetryNonce + 1, viewModel.uiState.value.playerReloadNonce)
+        }
+
+    @Test
     fun `onMoveQueueItem is a no-op for out-of-bounds indices`() =
         runTest {
             val track = sampleTrack
@@ -1039,6 +1090,14 @@ class PlayerViewModelTest {
         fun emitPeerLeft() { _events.tryEmit(SyncEvent.PeerLeft) }
         fun emitParticipantsUpdated(participants: List<Participant>) {
             _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
+        }
+
+        fun emitConnectionState(state: ConnectionState) {
+            _events.tryEmit(SyncEvent.ConnectionStateChanged(state))
+        }
+
+        fun emitRoomJoinFailed() {
+            _events.tryEmit(SyncEvent.RoomJoinFailed("failed"))
         }
     }
 
