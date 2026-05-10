@@ -26,6 +26,10 @@ Override locally:
   -PINVITE_LINK_HOST=api.example.com
 ```
 
+## Server configuration
+
+YouTube search and in-room playback require a YouTube Data API v3 key configured on the server. See [docs/youtube-api-key.md](docs/youtube-api-key.md) for step-by-step setup.
+
 ### Common misconfigurations
 
 | Mistake | Symptom | Correct value |
@@ -113,4 +117,3 @@ For example, with everything served from `https://api.example.com`:
 The invite link the app shares will be `https://api.example.com/room/<roomId>`.
 When a recipient taps it, the OS matches `https://api.example.com/room/*` against
 the `<intent-filter>` and opens the app directly (once App Links is verified).
-

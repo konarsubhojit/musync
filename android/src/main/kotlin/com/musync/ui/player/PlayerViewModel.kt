@@ -164,9 +164,10 @@ class PlayerViewModel
 
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
+            val isCreateRoomFlow = deepLinkRoomId != null && initialVideoId != null
             // Create-room navigation provides both roomId and videoId. Deep-link joins provide
             // only roomId. Treat the former as host mode and the latter as guest mode.
-            isHost = deepLinkRoomId == null || initialVideoId != null
+            isHost = deepLinkRoomId == null || isCreateRoomFlow
 
             // Generate a stable local user ID for this session.
             val localUserId = UUID.randomUUID().toString()

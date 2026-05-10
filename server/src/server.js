@@ -475,6 +475,13 @@ function createApp(options = {}) {
     return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
   }
 
+  /**
+   * Formats the first Socket.IO event argument into a compact log suffix.
+   * Includes payload key names and roomId (when present) without dumping
+   * full payload contents.
+   * @param {unknown} firstArg
+   * @returns {string}
+   */
   function describeSocketPayload(firstArg) {
     if (!firstArg || typeof firstArg !== 'object') return '';
     if (Array.isArray(firstArg)) return ` payload=array(len=${firstArg.length})`;
