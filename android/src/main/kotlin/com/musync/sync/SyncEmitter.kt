@@ -1,6 +1,7 @@
 package com.musync.sync
 
 import com.musync.data.model.Track
+import com.musync.logging.AppLogger
 import io.socket.client.Socket
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,11 +29,14 @@ class SyncEmitter
         private val socket: Socket,
         private val clock: Clock,
     ) {
+        private val tag = "SyncEmitter"
+
         /** Emits a [SocketEvents.PLAY] event so guests start playback at [positionMs]. */
         fun emitPlay(
             roomId: String,
             positionMs: Long,
         ) {
+            AppLogger.i(tag, "emit PLAY roomId=$roomId positionMs=$positionMs")
             socket.emit(
                 SocketEvents.PLAY,
                 JSONObject()
@@ -46,6 +50,7 @@ class SyncEmitter
             roomId: String,
             positionMs: Long,
         ) {
+            AppLogger.i(tag, "emit PAUSE roomId=$roomId positionMs=$positionMs")
             socket.emit(
                 SocketEvents.PAUSE,
                 JSONObject()
@@ -59,6 +64,7 @@ class SyncEmitter
             roomId: String,
             positionMs: Long,
         ) {
+            AppLogger.i(tag, "emit SEEK roomId=$roomId positionMs=$positionMs")
             socket.emit(
                 SocketEvents.SEEK,
                 JSONObject()
@@ -77,6 +83,7 @@ class SyncEmitter
             roomId: String,
             positionMs: Long,
         ) {
+            AppLogger.i(tag, "emit SYNC_HEARTBEAT roomId=$roomId positionMs=$positionMs")
             socket.emit(
                 SocketEvents.SYNC_HEARTBEAT,
                 JSONObject()
@@ -95,6 +102,7 @@ class SyncEmitter
             roomId: String,
             queue: List<Track>,
         ) {
+            AppLogger.i(tag, "emit QUEUE_UPDATED roomId=$roomId size=${queue.size}")
             val arr = JSONArray()
             queue.forEach { track ->
                 arr.put(

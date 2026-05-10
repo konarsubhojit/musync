@@ -203,6 +203,24 @@ class PlayerViewModelTest {
         }
 
     @Test
+    fun `create-room launch with roomId plus videoId is treated as host mode`() =
+        runTest {
+            val sessionRepo = FakeSessionRepository()
+            val viewModel =
+                buildViewModelWithRoomIdAndVideoId(
+                    roomId = "room-created",
+                    videoId = "jNQXAC9IVRw",
+                    sessionRepository = sessionRepo,
+                )
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.isHost)
+            val joined = sessionRepo.session.value
+            assertNotNull(joined)
+            assertEquals(joined!!.localUserId, joined.hostId)
+            assertEquals("room-created", joined.sessionId)
+        }
+
+    @Test
     fun `joins session as host when roomId is blank`() =
         runTest {
             val sessionRepo = FakeSessionRepository()
@@ -1064,6 +1082,29 @@ class PlayerViewModelTest {
         mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
+        musicRepository,
+        sessionRepository,
+        syncEmitter,
+        playbackSyncReceiver,
+        youTubeSearchRepository,
+        recentRoomsRepository,
+        userPreferencesRepository,
+        mediaPlaybackController,
+    )
+
+    private fun buildViewModelWithRoomIdAndVideoId(
+        roomId: String,
+        videoId: String,
+        musicRepository: MusicRepository = FakeMusicRepository(),
+        sessionRepository: SessionRepository = FakeSessionRepository(),
+        syncEmitter: SyncEmitter = mockk(relaxed = true),
+        playbackSyncReceiver: PlaybackSyncReceiver = mockk(relaxed = true),
+        youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
+        recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
+        userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
+        mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
+    ) = PlayerViewModel(
+        SavedStateHandle(mapOf("roomId" to roomId, "videoId" to videoId)),
         musicRepository,
         sessionRepository,
         syncEmitter,

@@ -1,5 +1,6 @@
 package com.musync.sync
 
+import com.musync.logging.AppLogger
 import io.socket.client.Socket
 import org.json.JSONObject
 import javax.inject.Inject
@@ -30,6 +31,7 @@ class PlaybackSyncReceiver
     constructor(
         private val socket: Socket,
     ) {
+        private val tag = "PlaybackSyncReceiver"
         private var onPlay: (Long) -> Unit = {}
         private var onPause: (Long) -> Unit = {}
         private var onSeek: (Long) -> Unit = {}
@@ -59,27 +61,32 @@ class PlaybackSyncReceiver
          * Idempotent: any previous listeners for these events are removed before re-registering.
          */
         fun startListening() {
+            AppLogger.i(tag, "startListening")
             socket.off(SocketEvents.PLAY)
             socket.on(SocketEvents.PLAY) { args ->
                 val json = args.firstOrNull() as? JSONObject ?: return@on
+                AppLogger.i(tag, "recv PLAY positionMs=${json.optLong("positionMs")}")
                 onPlay(json.optLong("positionMs"))
             }
 
             socket.off(SocketEvents.PAUSE)
             socket.on(SocketEvents.PAUSE) { args ->
                 val json = args.firstOrNull() as? JSONObject ?: return@on
+                AppLogger.i(tag, "recv PAUSE positionMs=${json.optLong("positionMs")}")
                 onPause(json.optLong("positionMs"))
             }
 
             socket.off(SocketEvents.SEEK)
             socket.on(SocketEvents.SEEK) { args ->
                 val json = args.firstOrNull() as? JSONObject ?: return@on
+                AppLogger.i(tag, "recv SEEK positionMs=${json.optLong("positionMs")}")
                 onSeek(json.optLong("positionMs"))
             }
         }
 
         /** Removes all PLAY, PAUSE, and SEEK listeners from the socket. */
         fun stopListening() {
+            AppLogger.i(tag, "stopListening")
             socket.off(SocketEvents.PLAY)
             socket.off(SocketEvents.PAUSE)
             socket.off(SocketEvents.SEEK)

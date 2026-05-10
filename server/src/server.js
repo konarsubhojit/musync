@@ -91,13 +91,11 @@ function createApp(options = {}) {
       res.status(400).json({ error: 'Search query too long' });
       return;
     }
-    const timeoutMs = parseInt(
-      process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS ?? process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000',
-      10,
-    );
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      console.log(`[youtube-search] request q="${q}" timeoutMs=${timeoutMs}`);
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('type', 'video');
@@ -106,6 +104,7 @@ function createApp(options = {}) {
       url.searchParams.set('key', apiKey);
       const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
+        console.warn(`[youtube-search] upstream error status=${response.status} q="${q}"`);
         res.status(502).json({ error: 'YouTube API error' });
         return;
       }
@@ -160,17 +159,22 @@ function createApp(options = {}) {
       return;
     }
 
-    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    const timeoutMs = parseInt(
+      process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS ?? process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000',
+      10,
+    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
+      console.log(`[youtube-video-info] request videoId=${videoId} timeoutMs=${timeoutMs}`);
       const url = new URL('https://www.googleapis.com/youtube/v3/videos');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('id', videoId);
       url.searchParams.set('key', apiKey);
       const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
+        console.warn(`[youtube-video-info] upstream error status=${response.status} videoId=${videoId}`);
         res.status(502).json({ error: 'YouTube API error' });
         return;
       }
@@ -471,9 +475,23 @@ function createApp(options = {}) {
     return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : 'Someone';
   }
 
+  function describeSocketPayload(firstArg) {
+    if (!firstArg || typeof firstArg !== 'object') return '';
+    if (Array.isArray(firstArg)) return ` payload=array(len=${firstArg.length})`;
+    const roomId = typeof firstArg.roomId === 'string' ? firstArg.roomId : '';
+    const keys = Object.keys(firstArg);
+    return ` payloadKeys=${keys.join(',')}${roomId ? ` room=${roomId}` : ''}`;
+  }
+
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[socket] connected  id=${socket.id}`);
+    socket.onAny((eventName, ...args) => {
+      console.log(`[socket] recv event=${eventName} id=${socket.id}${describeSocketPayload(args[0])}`);
+    });
+    socket.onAnyOutgoing((eventName, ...args) => {
+      console.log(`[socket] send event=${eventName} id=${socket.id}${describeSocketPayload(args[0])}`);
+    });
 
     // ── join_room ──────────────────────────────────────────────────────────
     // Accepts either a bare roomId string (legacy) or an object

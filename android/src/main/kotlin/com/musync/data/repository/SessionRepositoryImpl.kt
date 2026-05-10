@@ -6,6 +6,7 @@ import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
+import com.musync.logging.AppLogger
 import com.musync.sync.SocketEvents
 import io.socket.client.Ack
 import io.socket.client.Socket
@@ -41,6 +42,7 @@ class SessionRepositoryImpl
             private const val CHAT_BUFFER_CAPACITY = 64
             private const val TYPING_TIMEOUT_MS = 3_000L
             private const val MAX_CHAT_MESSAGES = 200
+            private const val TAG = "SessionRepository"
         }
 
         private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -57,32 +59,41 @@ class SessionRepositoryImpl
 
         init {
             socket.on(Socket.EVENT_CONNECT) {
+                AppLogger.i(TAG, "socket event connect")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTED))
             }
             socket.on(Socket.EVENT_DISCONNECT) {
+                AppLogger.w(TAG, "socket event disconnect")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.DISCONNECTED))
             }
             socket.on(Socket.EVENT_CONNECT_ERROR) {
+                AppLogger.w(TAG, "socket event connect_error")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
             }
             socket.on("reconnect_attempt") {
+                AppLogger.i(TAG, "socket event reconnect_attempt")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
             }
             socket.on("reconnect_error") {
+                AppLogger.w(TAG, "socket event reconnect_error")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
             }
             socket.on("reconnect_failed") {
+                AppLogger.w(TAG, "socket event reconnect_failed")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.DISCONNECTED))
             }
 
             socket.on(SocketEvents.ROOM_CLOSED) {
+                AppLogger.i(TAG, "socket event ROOM_CLOSED")
                 _session.value = null
                 _events.tryEmit(SyncEvent.RoomClosed)
             }
             socket.on(SocketEvents.PEER_JOINED) {
+                AppLogger.i(TAG, "socket event peer_joined")
                 _events.tryEmit(SyncEvent.PeerJoined)
             }
             socket.on(SocketEvents.PEER_LEFT) {
+                AppLogger.i(TAG, "socket event peer_left")
                 _events.tryEmit(SyncEvent.PeerLeft)
             }
 
@@ -90,6 +101,7 @@ class SessionRepositoryImpl
                 val payload = args.firstOrNull() as? JSONObject ?: return@on
                 val newHostSocketId = payload.optString("newHostSocketId")
                 if (newHostSocketId.isBlank()) return@on
+                AppLogger.i(TAG, "socket event HOST_TRANSFERRED newHostSocketId=$newHostSocketId")
                 val isNowHost = newHostSocketId == socket.id()
                 _events.tryEmit(SyncEvent.HostTransferred(isNowHost))
             }
@@ -97,12 +109,14 @@ class SessionRepositoryImpl
             socket.on(SocketEvents.DEMOCRATIC_MODE_CHANGED) { args ->
                 val payload = args.firstOrNull() as? JSONObject ?: return@on
                 val enabled = payload.optBoolean("enabled", false)
+                AppLogger.i(TAG, "socket event DEMOCRATIC_MODE_CHANGED enabled=$enabled")
                 _events.tryEmit(SyncEvent.DemocraticModeChanged(enabled))
             }
 
             socket.on(SocketEvents.AUTO_APPROVE_QUEUE_CHANGED) { args ->
                 val payload = args.firstOrNull() as? JSONObject ?: return@on
                 val enabled = payload.optBoolean("enabled", true)
+                AppLogger.i(TAG, "socket event AUTO_APPROVE_QUEUE_CHANGED enabled=$enabled")
                 _events.tryEmit(SyncEvent.AutoApproveQueueChanged(enabled))
             }
 
@@ -110,6 +124,7 @@ class SessionRepositoryImpl
                 val payload = args.firstOrNull() as? JSONObject ?: return@on
                 val trackId = payload.optString("id").takeIf { it.isNotBlank() } ?: return@on
                 val trackTitle = payload.optString("title").takeIf { it.isNotBlank() } ?: return@on
+                AppLogger.i(TAG, "socket event QUEUE_ADD_REQUEST trackId=$trackId")
                 _events.tryEmit(SyncEvent.QueueAddRequest(trackId, trackTitle))
             }
 
@@ -118,6 +133,7 @@ class SessionRepositoryImpl
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
                 val senderName = obj.optString("senderName").ifBlank { "Someone" }
                 val text = obj.optString("text").takeIf { it.isNotBlank() } ?: return@on
+                AppLogger.i(TAG, "socket event CHAT_MESSAGE senderId=$senderId")
                 val message =
                     ChatMessage(
                         id = UUID.randomUUID().toString(),
@@ -133,12 +149,14 @@ class SessionRepositoryImpl
             socket.on(SocketEvents.REACTION) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
                 val emoji = obj.optString("emoji").takeIf { it.isNotBlank() } ?: return@on
+                AppLogger.i(TAG, "socket event REACTION")
                 _reactions.tryEmit(emoji)
             }
 
             socket.on(SocketEvents.TYPING) { args ->
                 val obj = args?.firstOrNull() as? JSONObject ?: return@on
                 val senderId = obj.optString("senderId").takeIf { it.isNotBlank() } ?: return@on
+                AppLogger.i(TAG, "socket event TYPING senderId=$senderId")
                 _typingUsers.update { it + senderId }
                 scheduleTypingTimeout(senderId)
             }
@@ -153,6 +171,7 @@ class SessionRepositoryImpl
                         val displayName = obj.optString("displayName")
                         Participant(socketId = socketId, displayName = displayName)
                     }
+                AppLogger.i(TAG, "socket event PARTICIPANTS_UPDATED count=${participants.size}")
                 _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
             }
         }
@@ -172,6 +191,7 @@ class SessionRepositoryImpl
         }
 
         override fun joinSession(session: Session) {
+            AppLogger.i(TAG, "emit join_room sessionId=${session.sessionId}")
             playNextEmitted.set(false)
             _session.value = session
             _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
@@ -187,6 +207,7 @@ class SessionRepositoryImpl
                 Ack { args ->
                     val data = (args.getOrNull(0) as? JSONObject)
                     if (data == null) {
+                        AppLogger.w(TAG, "join_room ack missing payload")
                         _events.tryEmit(SyncEvent.RoomJoinFailed("No response from server"))
                         return@Ack
                     }
@@ -194,6 +215,7 @@ class SessionRepositoryImpl
                     val hasOk = data.has("ok")
                     val ok = data.optBoolean("ok", false)
                     if (error != null || (hasOk && !ok)) {
+                        AppLogger.w(TAG, "join_room ack failed error=$error")
                         _events.tryEmit(SyncEvent.RoomJoinFailed(error))
                         return@Ack
                     }
@@ -205,6 +227,7 @@ class SessionRepositoryImpl
 
         override fun leaveSession() {
             val roomId = _session.value?.sessionId
+            AppLogger.i(TAG, "emit leave_room roomId=$roomId")
             playNextEmitted.set(false)
             _session.value = null
             cancelAllTypingJobs()
@@ -216,6 +239,7 @@ class SessionRepositoryImpl
 
         override fun endSession() {
             val roomId = _session.value?.sessionId ?: return
+            AppLogger.i(TAG, "emit end_session roomId=$roomId")
             socket.emit(SocketEvents.END_SESSION, roomId)
         }
 
@@ -236,6 +260,7 @@ class SessionRepositoryImpl
                     isLocal = true,
                 )
             _chatMessages.tryEmit(localMessage)
+            AppLogger.i(TAG, "emit CHAT_MESSAGE roomId=${session.sessionId}")
             socket.emit(
                 SocketEvents.CHAT_MESSAGE,
                 JSONObject()
@@ -248,6 +273,7 @@ class SessionRepositoryImpl
         override fun sendReaction(emoji: String) {
             val session = _session.value ?: return
             val trimmedEmoji = emoji.trim().takeIf { it.isNotBlank() } ?: return
+            AppLogger.i(TAG, "emit REACTION roomId=${session.sessionId}")
             socket.emit(
                 SocketEvents.REACTION,
                 JSONObject()
@@ -259,6 +285,7 @@ class SessionRepositoryImpl
         override fun sendTyping(senderName: String) {
             val session = _session.value ?: return
             val trimmedName = senderName.trim().ifBlank { "You" }
+            AppLogger.i(TAG, "emit TYPING roomId=${session.sessionId}")
             socket.emit(
                 SocketEvents.TYPING,
                 JSONObject()
@@ -271,6 +298,7 @@ class SessionRepositoryImpl
             roomId: String,
             newHostSocketId: String,
         ) {
+            AppLogger.i(TAG, "emit TRANSFER_HOST roomId=$roomId newHostSocketId=$newHostSocketId")
             val payload =
                 JSONObject().apply {
                     put("roomId", roomId)
@@ -283,6 +311,7 @@ class SessionRepositoryImpl
             roomId: String,
             enabled: Boolean,
         ) {
+            AppLogger.i(TAG, "emit SET_DEMOCRATIC_MODE roomId=$roomId enabled=$enabled")
             val payload =
                 JSONObject().apply {
                     put("roomId", roomId)
@@ -295,6 +324,7 @@ class SessionRepositoryImpl
             roomId: String,
             enabled: Boolean,
         ) {
+            AppLogger.i(TAG, "emit SET_AUTO_APPROVE_QUEUE roomId=$roomId enabled=$enabled")
             val payload =
                 JSONObject().apply {
                     put("roomId", roomId)
@@ -308,6 +338,7 @@ class SessionRepositoryImpl
             trackId: String,
             trackTitle: String,
         ) {
+            AppLogger.i(TAG, "emit REQUEST_QUEUE_ADD roomId=$roomId trackId=$trackId")
             val payload =
                 JSONObject().apply {
                     put("roomId", roomId)
@@ -321,6 +352,7 @@ class SessionRepositoryImpl
             trackId: String,
             trackTitle: String,
         ) {
+            AppLogger.i(TAG, "emit APPROVE_QUEUE_ADD roomId=$roomId trackId=$trackId")
             val payload =
                 JSONObject().apply {
                     put("roomId", roomId)
