@@ -46,8 +46,8 @@ class YouTubeSearchRepositoryImpl
                             buildList {
                                 for (i in 0 until itemsArray.length()) {
                                     val item = itemsArray.optJSONObject(i) ?: continue
-                                    val videoId = item.optString("videoId").trim()
-                                    if (videoId.isEmpty()) continue
+                                    val videoId = item.optString("videoId")
+                                    if (videoId.isBlank()) continue
                                     add(
                                         YouTubeSearchResult(
                                             videoId = videoId,

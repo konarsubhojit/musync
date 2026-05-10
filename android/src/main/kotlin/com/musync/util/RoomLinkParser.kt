@@ -13,12 +13,12 @@ object RoomLinkParser {
 
     /**
      * Strict UUID matcher for room IDs shared by MuSync links.
-     * - Group 3 (`[1-5]`) enforces RFC 4122 version bits.
-     * - Group 4 (`[89ab]`) enforces RFC 4122 variant bits.
+     * - The 3rd UUID block starts with `[1-5]` to enforce RFC 4122 version bits.
+     * - The 4th UUID block starts with `[89abAB]` to enforce RFC 4122 variant bits.
      */
     private val UUID_PATTERN =
         Regex(
-            """(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$""",
+            """^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$""",
         )
 
     /** Allowed characters and shape for a bare room code/UUID. */
@@ -56,7 +56,7 @@ object RoomLinkParser {
                 }
             if (pathSegments != null) {
                 // Accept UUID anywhere in path (works for both /room/<uuid> and /<uuid> links).
-                val uuidSegment = pathSegments.firstOrNull { UUID_PATTERN.matches(it) }
+                val uuidSegment = pathSegments.lastOrNull { UUID_PATTERN.matches(it) }
                 if (uuidSegment != null) return uuidSegment
 
                 // Preserve existing `/room/<id>` parsing when no UUID is present.

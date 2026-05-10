@@ -91,7 +91,7 @@ class RoomLinkParserTest {
     }
 
     @Test
-    fun `uuid in url path without room segment is parsed`() {
+    fun `non uuid room id in url path without room segment is parsed`() {
         assertEquals(
             "deadbeef-1234",
             RoomLinkParser.extractRoomId("https://host.example.com/deadbeef-1234"),
