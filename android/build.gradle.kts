@@ -36,7 +36,40 @@ android {
 
     val serverUrl = configValue("SERVER_URL", "http://10.0.2.2:3000")
     val inviteLinkBaseUrl = configValue("INVITE_LINK_BASE_URL", "https://listen.yourdomain.com/room")
-    val inviteLinkHost = configValue("INVITE_LINK_HOST", "listen.yourdomain.com")
+
+    // Derive the deep-link host from INVITE_LINK_BASE_URL automatically.
+    // INVITE_LINK_HOST only needs to be set when the invite-link host differs
+    // from the INVITE_LINK_BASE_URL host (an uncommon scenario).
+    //
+    // The derived value is sanitised to a bare hostname because android:host in
+    // AndroidManifest.xml must not contain a scheme (https://) or path (/room).
+    // If someone accidentally configures INVITE_LINK_HOST as a full URL
+    // (e.g. "https://musync-5mdf.onrender.com") the scheme and any trailing
+    // path/port are stripped so the manifest placeholder is always correct.
+    fun extractBareHost(raw: String): String {
+        // Strip any accidental scheme prefix, then take only the authority
+        // (host[:port]) before the first path separator, then drop any port.
+        // This makes android:host safe for any combination of inputs:
+        //   "musync.example.com"              → "musync.example.com"
+        //   "https://musync.example.com"      → "musync.example.com"
+        //   "https://musync.example.com/room" → "musync.example.com"
+        //   "musync.example.com:3000"         → "musync.example.com"
+        val withoutScheme = raw.removePrefix("https://").removePrefix("http://")
+        val authority = withoutScheme.substringBefore("/")
+        val host = authority.substringBefore(":")
+        return host.trim().ifEmpty { raw }
+    }
+
+    val derivedInviteLinkHost = extractBareHost(inviteLinkBaseUrl)
+    val inviteLinkHostRaw = configValue("INVITE_LINK_HOST", derivedInviteLinkHost)
+    val inviteLinkHost = extractBareHost(inviteLinkHostRaw)
+
+    if (inviteLinkHostRaw != inviteLinkHost) {
+        logger.warn(
+            "[musync] INVITE_LINK_HOST was '$inviteLinkHostRaw' — sanitised to bare hostname '$inviteLinkHost' " +
+                "for AndroidManifest android:host. Set INVITE_LINK_HOST to '$inviteLinkHost' to suppress this warning.",
+        )
+    }
 
     defaultConfig {
         applicationId = "com.musync"
@@ -53,9 +86,10 @@ android {
         buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
         buildConfigField("String", "INVITE_LINK_BASE_URL", "\"$inviteLinkBaseUrl\"")
 
-        // Parameterise the deep-link host declared in AndroidManifest.xml so
-        // installed APKs can be pointed at the same domain as the configured
-        // invite-link base URL.
+        // Inject the sanitised bare hostname into AndroidManifest.xml so the
+        // deep-link <intent-filter> matches https://<host>/room/<id> URLs.
+        // INVITE_LINK_BASE_URL is used to build the actual invite link URL;
+        // this placeholder only controls which host the OS intercepts.
         manifestPlaceholders["inviteLinkHost"] = inviteLinkHost
     }
 

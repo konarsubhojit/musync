@@ -40,13 +40,14 @@ object RoomLinkParser {
 
         if (urlMatch != null) {
             // Fall back to the last non-empty path segment of the URL.
-            val lastSegment = try {
-                URI(target).path
-                    ?.split("/")
-                    ?.lastOrNull { it.isNotEmpty() }
-            } catch (e: URISyntaxException) {
-                null
-            }
+            val lastSegment =
+                try {
+                    URI(target).path
+                        ?.split("/")
+                        ?.lastOrNull { it.isNotEmpty() }
+                } catch (e: URISyntaxException) {
+                    null
+                }
             if (lastSegment != null && BARE_PATTERN.matches(lastSegment)) {
                 return lastSegment
             }

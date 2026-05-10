@@ -275,7 +275,10 @@ class PlayerViewModel
                         }
                         is SyncEvent.QueueAddRequest -> {
                             _uiState.update { state ->
-                                state.copy(pendingQueueRequests = state.pendingQueueRequests + (event.trackId to event.trackTitle))
+                                state.copy(
+                                    pendingQueueRequests =
+                                        state.pendingQueueRequests + (event.trackId to event.trackTitle),
+                                )
                             }
                         }
                         is SyncEvent.ConnectionStateChanged -> {
@@ -788,41 +791,41 @@ class PlayerViewModel
             }
             videoInfoJob =
                 viewModelScope.launch {
-                val result = youTubeSearchRepository.fetchVideoInfo(videoId)
-                result.fold(
-                    onSuccess = { info ->
-                        musicRepository.addToQueue(
-                            Track(
-                                id = UUID.randomUUID().toString(),
-                                title = info.title,
-                                artist = info.channelTitle,
-                                youtubeVideoId = videoId,
-                                durationMs = 0L,
-                            ),
-                        )
-                        _uiState.update {
-                            it.copy(
-                                addToQueueSheetVisible = false,
-                                addToQueueInput = "",
-                                addToQueueError = false,
-                                isFetchingVideoInfo = false,
-                                addToQueueFetchError = false,
-                                searchResults = emptyList(),
-                                isSearching = false,
-                                searchError = false,
+                    val result = youTubeSearchRepository.fetchVideoInfo(videoId)
+                    result.fold(
+                        onSuccess = { info ->
+                            musicRepository.addToQueue(
+                                Track(
+                                    id = UUID.randomUUID().toString(),
+                                    title = info.title,
+                                    artist = info.channelTitle,
+                                    youtubeVideoId = videoId,
+                                    durationMs = 0L,
+                                ),
                             )
-                        }
-                    },
-                    onFailure = {
-                        _uiState.update {
-                            it.copy(
-                                isFetchingVideoInfo = false,
-                                addToQueueFetchError = true,
-                            )
-                        }
-                    },
-                )
-            }
+                            _uiState.update {
+                                it.copy(
+                                    addToQueueSheetVisible = false,
+                                    addToQueueInput = "",
+                                    addToQueueError = false,
+                                    isFetchingVideoInfo = false,
+                                    addToQueueFetchError = false,
+                                    searchResults = emptyList(),
+                                    isSearching = false,
+                                    searchError = false,
+                                )
+                            }
+                        },
+                        onFailure = {
+                            _uiState.update {
+                                it.copy(
+                                    isFetchingVideoInfo = false,
+                                    addToQueueFetchError = true,
+                                )
+                            }
+                        },
+                    )
+                }
         }
 
         /**

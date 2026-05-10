@@ -1,8 +1,8 @@
 package com.musync.ui.player
 
 import androidx.lifecycle.SavedStateHandle
-import com.musync.data.model.Participant
 import com.musync.data.model.ConnectionState
+import com.musync.data.model.Participant
 import com.musync.data.model.PlayerState
 import com.musync.data.model.RecentRoom
 import com.musync.data.model.Session
@@ -536,11 +536,12 @@ class PlayerViewModelTest {
         runTest {
             val emitter = mockk<SyncEmitter>(relaxed = true)
             val sessionRepo = FakeSessionRepository()
-            val viewModel = buildViewModelWithRoomId(
-                roomId = "room-g",
-                sessionRepository = sessionRepo,
-                syncEmitter = emitter,
-            )
+            val viewModel =
+                buildViewModelWithRoomId(
+                    roomId = "room-g",
+                    sessionRepository = sessionRepo,
+                    syncEmitter = emitter,
+                )
             advanceUntilIdle()
             sessionRepo.emitDemocraticModeChanged(enabled = true)
             advanceUntilIdle()
@@ -1083,8 +1084,15 @@ class PlayerViewModelTest {
         private val queueFlow = MutableStateFlow(initialQueue)
         override val currentTrack: Flow<Track?> = trackFlow
         override val queue: Flow<List<Track>> = queueFlow
-        override fun updateQueue(tracks: List<Track>) { queueFlow.value = tracks }
-        override fun addToQueue(track: Track) { queueFlow.value = queueFlow.value + track }
+
+        override fun updateQueue(tracks: List<Track>) {
+            queueFlow.value = tracks
+        }
+
+        override fun addToQueue(track: Track) {
+            queueFlow.value = queueFlow.value + track
+        }
+
         fun currentQueueSnapshot(): List<Track> = queueFlow.value
     }
 
@@ -1108,42 +1116,104 @@ class PlayerViewModelTest {
         var approveQueueAddCalledWith: Triple<String, String, String>? = null
 
         override fun onPlayerStateChanged(state: PlayerState) = Unit
-        override fun joinSession(session: Session) { _session.value = session }
-        override fun leaveSession() { _session.value = null }
-        override fun endSession() { endSessionCalled = true }
-        override fun sendChatMessage(text: String, senderName: String) = Unit
+
+        override fun joinSession(session: Session) {
+            _session.value = session
+        }
+
+        override fun leaveSession() {
+            _session.value = null
+        }
+
+        override fun endSession() {
+            endSessionCalled = true
+        }
+
+        override fun sendChatMessage(
+            text: String,
+            senderName: String,
+        ) = Unit
+
         override fun sendReaction(emoji: String) = Unit
+
         override fun sendTyping(senderName: String) = Unit
 
-        override fun transferHost(roomId: String, newHostSocketId: String) {
+        override fun transferHost(
+            roomId: String,
+            newHostSocketId: String,
+        ) {
             transferHostCalledWith = Pair(roomId, newHostSocketId)
         }
 
-        override fun setDemocraticMode(roomId: String, enabled: Boolean) {
+        override fun setDemocraticMode(
+            roomId: String,
+            enabled: Boolean,
+        ) {
             setDemocraticModeCalledWith = Pair(roomId, enabled)
         }
 
-        override fun setAutoApproveQueue(roomId: String, enabled: Boolean) {
+        override fun setAutoApproveQueue(
+            roomId: String,
+            enabled: Boolean,
+        ) {
             setAutoApproveQueueCalledWith = Pair(roomId, enabled)
         }
 
-        override fun requestQueueAdd(roomId: String, trackId: String, trackTitle: String) {
+        override fun requestQueueAdd(
+            roomId: String,
+            trackId: String,
+            trackTitle: String,
+        ) {
             requestQueueAddCalledWith = Triple(roomId, trackId, trackTitle)
         }
 
-        override fun approveQueueAdd(roomId: String, trackId: String, trackTitle: String) {
+        override fun approveQueueAdd(
+            roomId: String,
+            trackId: String,
+            trackTitle: String,
+        ) {
             approveQueueAddCalledWith = Triple(roomId, trackId, trackTitle)
         }
 
-        fun emitRoomClosed() { _events.tryEmit(SyncEvent.RoomClosed) }
-        fun emitHostTransferred(isNowHost: Boolean) { _events.tryEmit(SyncEvent.HostTransferred(isNowHost)) }
-        fun emitDemocraticModeChanged(enabled: Boolean) { _events.tryEmit(SyncEvent.DemocraticModeChanged(enabled)) }
-        fun emitAutoApproveQueueChanged(enabled: Boolean) { _events.tryEmit(SyncEvent.AutoApproveQueueChanged(enabled)) }
-        fun emitQueueAddRequest(trackId: String, trackTitle: String) { _events.tryEmit(SyncEvent.QueueAddRequest(trackId, trackTitle)) }
-        fun emitPlayNext() { _events.tryEmit(SyncEvent.PlayNext("test-session")) }
-        fun emitMembersSnapshot(count: Int) { _events.tryEmit(SyncEvent.MembersSnapshot(count)) }
-        fun emitPeerJoined() { _events.tryEmit(SyncEvent.PeerJoined) }
-        fun emitPeerLeft() { _events.tryEmit(SyncEvent.PeerLeft) }
+        fun emitRoomClosed() {
+            _events.tryEmit(SyncEvent.RoomClosed)
+        }
+
+        fun emitHostTransferred(isNowHost: Boolean) {
+            _events.tryEmit(SyncEvent.HostTransferred(isNowHost))
+        }
+
+        fun emitDemocraticModeChanged(enabled: Boolean) {
+            _events.tryEmit(SyncEvent.DemocraticModeChanged(enabled))
+        }
+
+        fun emitAutoApproveQueueChanged(enabled: Boolean) {
+            _events.tryEmit(SyncEvent.AutoApproveQueueChanged(enabled))
+        }
+
+        fun emitQueueAddRequest(
+            trackId: String,
+            trackTitle: String,
+        ) {
+            _events.tryEmit(SyncEvent.QueueAddRequest(trackId, trackTitle))
+        }
+
+        fun emitPlayNext() {
+            _events.tryEmit(SyncEvent.PlayNext("test-session"))
+        }
+
+        fun emitMembersSnapshot(count: Int) {
+            _events.tryEmit(SyncEvent.MembersSnapshot(count))
+        }
+
+        fun emitPeerJoined() {
+            _events.tryEmit(SyncEvent.PeerJoined)
+        }
+
+        fun emitPeerLeft() {
+            _events.tryEmit(SyncEvent.PeerLeft)
+        }
+
         fun emitParticipantsUpdated(participants: List<Participant>) {
             _events.tryEmit(SyncEvent.ParticipantsUpdated(participants))
         }
@@ -1159,7 +1229,12 @@ class PlayerViewModelTest {
 
     private class FakeRecentRoomsRepository : RecentRoomsRepository {
         override fun getRecentRooms() = emptyList<RecentRoom>()
-        override fun addOrUpdateRoom(roomId: String, displayName: String) = Unit
+
+        override fun addOrUpdateRoom(
+            roomId: String,
+            displayName: String,
+        ) = Unit
+
         override fun clearHistory() = Unit
     }
 
@@ -1184,7 +1259,9 @@ class PlayerViewModelTest {
     ) : UserPreferencesRepository {
         override val displayName = flowOf(savedName)
         override val darkTheme = flowOf(true)
+
         override suspend fun saveDisplayName(name: String) = Unit
+
         override suspend fun saveDarkTheme(enabled: Boolean) = Unit
     }
 }

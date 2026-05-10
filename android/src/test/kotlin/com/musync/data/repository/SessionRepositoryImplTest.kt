@@ -145,9 +145,10 @@ class SessionRepositoryImplTest {
 
     private fun TestScope.collectEvents(block: () -> Unit): List<SyncEvent> {
         val emitted = mutableListOf<SyncEvent>()
-        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
-            repository.events.collect { emitted.add(it) }
-        }
+        val job =
+            launch(UnconfinedTestDispatcher(testScheduler)) {
+                repository.events.collect { emitted.add(it) }
+            }
         block()
         job.cancel()
         return emitted
@@ -155,9 +156,10 @@ class SessionRepositoryImplTest {
 
     private fun TestScope.collectChatMessages(block: () -> Unit): List<ChatMessage> {
         val received = mutableListOf<ChatMessage>()
-        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
-            repository.chatMessages.collect { received.add(it) }
-        }
+        val job =
+            launch(UnconfinedTestDispatcher(testScheduler)) {
+                repository.chatMessages.collect { received.add(it) }
+            }
         block()
         job.cancel()
         return received
@@ -165,9 +167,10 @@ class SessionRepositoryImplTest {
 
     private fun TestScope.collectReactions(block: () -> Unit): List<String> {
         val received = mutableListOf<String>()
-        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
-            repository.reactions.collect { received.add(it) }
-        }
+        val job =
+            launch(UnconfinedTestDispatcher(testScheduler)) {
+                repository.reactions.collect { received.add(it) }
+            }
         block()
         job.cancel()
         return received
@@ -205,11 +208,12 @@ class SessionRepositoryImplTest {
     fun `emits PlayNext only once even when ENDED fires multiple times`() =
         runTest {
             repository.joinSession(hostSession)
-            val emitted = collectEvents {
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-            }
+            val emitted =
+                collectEvents {
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                }
             assertEquals("PLAY_NEXT must be emitted exactly once", 1, emitted.size)
         }
 
@@ -217,11 +221,12 @@ class SessionRepositoryImplTest {
     fun `resets guard on PLAYING so next track can emit PlayNext again`() =
         runTest {
             repository.joinSession(hostSession)
-            val emitted = collectEvents {
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-                repository.onPlayerStateChanged(PlayerState.PLAYING)
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-            }
+            val emitted =
+                collectEvents {
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                    repository.onPlayerStateChanged(PlayerState.PLAYING)
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                }
             assertEquals("PLAY_NEXT should be emitted once per track", 2, emitted.size)
         }
 
@@ -229,11 +234,12 @@ class SessionRepositoryImplTest {
     fun `resets guard when joining a new session`() =
         runTest {
             repository.joinSession(hostSession)
-            val emitted = collectEvents {
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-                repository.joinSession(hostSession.copy(sessionId = "session-2"))
-                repository.onPlayerStateChanged(PlayerState.ENDED)
-            }
+            val emitted =
+                collectEvents {
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                    repository.joinSession(hostSession.copy(sessionId = "session-2"))
+                    repository.onPlayerStateChanged(PlayerState.ENDED)
+                }
             val playNext = emitted.filterIsInstance<SyncEvent.PlayNext>()
             assertEquals(2, playNext.size)
             assertEquals(SyncEvent.PlayNext("session-1"), playNext[0])
@@ -271,10 +277,11 @@ class SessionRepositoryImplTest {
     fun `emits HostTransferred(isNowHost=true) when socket id matches newHostSocketId`() =
         runTest {
             repository.joinSession(guestSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply { put("newHostSocketId", "my-socket-id") }
-                hostTransferredListener?.call(payload)
-            }
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("newHostSocketId", "my-socket-id") }
+                    hostTransferredListener?.call(payload)
+                }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.HostTransferred(isNowHost = true), emitted.first())
         }
@@ -283,10 +290,11 @@ class SessionRepositoryImplTest {
     fun `emits HostTransferred(isNowHost=false) when socket id does not match newHostSocketId`() =
         runTest {
             repository.joinSession(hostSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply { put("newHostSocketId", "other-socket-id") }
-                hostTransferredListener?.call(payload)
-            }
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("newHostSocketId", "other-socket-id") }
+                    hostTransferredListener?.call(payload)
+                }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.HostTransferred(isNowHost = false), emitted.first())
         }
@@ -295,10 +303,11 @@ class SessionRepositoryImplTest {
     fun `does not emit HostTransferred when HOST_TRANSFERRED payload is missing newHostSocketId`() =
         runTest {
             repository.joinSession(guestSession)
-            val emitted = collectEvents {
-                val emptyPayload = JSONObject()
-                hostTransferredListener?.call(emptyPayload)
-            }
+            val emitted =
+                collectEvents {
+                    val emptyPayload = JSONObject()
+                    hostTransferredListener?.call(emptyPayload)
+                }
             assertTrue("Empty payload should produce no events", emitted.isEmpty())
         }
 
@@ -320,10 +329,11 @@ class SessionRepositoryImplTest {
     fun `emits DemocraticModeChanged(true) when DEMOCRATIC_MODE_CHANGED enabled=true is received`() =
         runTest {
             repository.joinSession(guestSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply { put("enabled", true) }
-                democraticModeChangedListener?.call(payload)
-            }
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("enabled", true) }
+                    democraticModeChangedListener?.call(payload)
+                }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.DemocraticModeChanged(enabled = true), emitted.first())
         }
@@ -332,10 +342,11 @@ class SessionRepositoryImplTest {
     fun `emits DemocraticModeChanged(false) when DEMOCRATIC_MODE_CHANGED enabled=false is received`() =
         runTest {
             repository.joinSession(guestSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply { put("enabled", false) }
-                democraticModeChangedListener?.call(payload)
-            }
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("enabled", false) }
+                    democraticModeChangedListener?.call(payload)
+                }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.DemocraticModeChanged(enabled = false), emitted.first())
         }
@@ -358,10 +369,11 @@ class SessionRepositoryImplTest {
     fun `emits AutoApproveQueueChanged when AUTO_APPROVE_QUEUE_CHANGED is received`() =
         runTest {
             repository.joinSession(guestSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply { put("enabled", false) }
-                autoApproveQueueChangedListener?.call(payload)
-            }
+            val emitted =
+                collectEvents {
+                    val payload = JSONObject().apply { put("enabled", false) }
+                    autoApproveQueueChangedListener?.call(payload)
+                }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.AutoApproveQueueChanged(enabled = false), emitted.first())
         }
@@ -384,13 +396,15 @@ class SessionRepositoryImplTest {
     fun `emits QueueAddRequest when QUEUE_ADD_REQUEST is received`() =
         runTest {
             repository.joinSession(hostSession)
-            val emitted = collectEvents {
-                val payload = JSONObject().apply {
-                    put("id", "track-123")
-                    put("title", "My Song")
+            val emitted =
+                collectEvents {
+                    val payload =
+                        JSONObject().apply {
+                            put("id", "track-123")
+                            put("title", "My Song")
+                        }
+                    queueAddRequestListener?.call(payload)
                 }
-                queueAddRequestListener?.call(payload)
-            }
             assertEquals(1, emitted.size)
             assertEquals(SyncEvent.QueueAddRequest("track-123", "My Song"), emitted.first())
         }
@@ -427,13 +441,15 @@ class SessionRepositoryImplTest {
     fun `emits ChatMessage when CHAT_MESSAGE server event is received`() =
         runTest {
             repository.joinSession(guestSession)
-            val received = collectChatMessages {
-                val payload = JSONObject()
-                    .put("senderId", "user-1")
-                    .put("senderName", "Alice")
-                    .put("text", "Hello!")
-                chatMessageListener?.call(payload)
-            }
+            val received =
+                collectChatMessages {
+                    val payload =
+                        JSONObject()
+                            .put("senderId", "user-1")
+                            .put("senderName", "Alice")
+                            .put("text", "Hello!")
+                    chatMessageListener?.call(payload)
+                }
             assertEquals(1, received.size)
             with(received.first()) {
                 assertEquals("user-1", senderId)
@@ -447,10 +463,11 @@ class SessionRepositoryImplTest {
     fun `ignores CHAT_MESSAGE event with missing senderId`() =
         runTest {
             repository.joinSession(guestSession)
-            val received = collectChatMessages {
-                val payload = JSONObject().put("text", "Hello!")
-                chatMessageListener?.call(payload)
-            }
+            val received =
+                collectChatMessages {
+                    val payload = JSONObject().put("text", "Hello!")
+                    chatMessageListener?.call(payload)
+                }
             assertTrue("No message expected when senderId is missing", received.isEmpty())
         }
 
@@ -458,13 +475,15 @@ class SessionRepositoryImplTest {
     fun `ignores CHAT_MESSAGE event with blank text`() =
         runTest {
             repository.joinSession(guestSession)
-            val received = collectChatMessages {
-                val payload = JSONObject()
-                    .put("senderId", "user-1")
-                    .put("senderName", "Alice")
-                    .put("text", "   ")
-                chatMessageListener?.call(payload)
-            }
+            val received =
+                collectChatMessages {
+                    val payload =
+                        JSONObject()
+                            .put("senderId", "user-1")
+                            .put("senderName", "Alice")
+                            .put("text", "   ")
+                    chatMessageListener?.call(payload)
+                }
             assertTrue("No message expected when text is blank", received.isEmpty())
         }
 
@@ -507,10 +526,11 @@ class SessionRepositoryImplTest {
     fun `emits reaction emoji when REACTION server event is received`() =
         runTest {
             repository.joinSession(guestSession)
-            val received = collectReactions {
-                val payload = JSONObject().put("emoji", "🔥")
-                reactionListener?.call(payload)
-            }
+            val received =
+                collectReactions {
+                    val payload = JSONObject().put("emoji", "🔥")
+                    reactionListener?.call(payload)
+                }
             assertEquals(listOf("🔥"), received)
         }
 
@@ -518,10 +538,11 @@ class SessionRepositoryImplTest {
     fun `ignores REACTION event with blank emoji`() =
         runTest {
             repository.joinSession(guestSession)
-            val received = collectReactions {
-                val payload = JSONObject().put("emoji", "  ")
-                reactionListener?.call(payload)
-            }
+            val received =
+                collectReactions {
+                    val payload = JSONObject().put("emoji", "  ")
+                    reactionListener?.call(payload)
+                }
             assertTrue("No reaction expected when emoji is blank", received.isEmpty())
         }
 

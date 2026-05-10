@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import com.musync.BuildConfig
 import com.musync.ui.createroom.CreateRoomScreen
 import com.musync.ui.home.HomeScreen
 import com.musync.ui.player.PlayerScreen
@@ -81,7 +82,7 @@ fun MuSyncNavGraph(
                 ),
             deepLinks =
                 listOf(
-                    navDeepLink { uriPattern = "https://listen.yourdomain.com/room/{roomId}" },
+                    navDeepLink { uriPattern = "${BuildConfig.INVITE_LINK_BASE_URL}/{roomId}" },
                 ),
         ) {
             PlayerScreen(onBack = { navController.popBackStack() })
