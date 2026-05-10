@@ -1,6 +1,7 @@
 package com.musync.sync
 
 import com.musync.data.model.SyncHeartbeat
+import com.musync.logging.AppLogger
 import io.socket.client.Socket
 import org.json.JSONObject
 import javax.inject.Inject
@@ -24,6 +25,8 @@ class SyncManager
         private val socket: Socket,
         private val clock: Clock,
     ) {
+        private val tag = "SyncManager"
+
         companion object {
             /** Minimum absolute drift (ms) that triggers a seek correction. */
             const val SEEK_THRESHOLD_MS = 2_000L
@@ -48,8 +51,10 @@ class SyncManager
 
         /** Registers the [SocketEvents.SYNC_HEARTBEAT] listener on the socket. */
         fun startListening() {
+            AppLogger.i(tag, "startListening")
             socket.on(SocketEvents.SYNC_HEARTBEAT) { args ->
                 val json = args.firstOrNull() as? JSONObject ?: return@on
+                AppLogger.i(tag, "recv SYNC_HEARTBEAT hostPositionMs=${json.optLong("hostPositionMs")}")
                 val heartbeat =
                     SyncHeartbeat(
                         hostPositionMs = json.optLong("hostPositionMs"),
@@ -61,6 +66,7 @@ class SyncManager
 
         /** Removes the [SocketEvents.SYNC_HEARTBEAT] listener from the socket. */
         fun stopListening() {
+            AppLogger.i(tag, "stopListening")
             socket.off(SocketEvents.SYNC_HEARTBEAT)
         }
 

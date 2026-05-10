@@ -164,12 +164,15 @@ class PlayerViewModel
 
         init {
             val deepLinkRoomId = savedStateHandle.get<String>(ARG_ROOM_ID)?.takeIf { it.isNotBlank() }
-            isHost = deepLinkRoomId == null
+            val isCreateRoomFlow = deepLinkRoomId != null && initialVideoId != null
+            // Create-room navigation provides both roomId and videoId. Deep-link joins provide
+            // only roomId. Treat the former as host mode and the latter as guest mode.
+            isHost = deepLinkRoomId == null || isCreateRoomFlow
 
             // Generate a stable local user ID for this session.
             val localUserId = UUID.randomUUID().toString()
 
-            if (deepLinkRoomId != null) {
+            if (!isHost && deepLinkRoomId != null) {
                 // Guest mode: joining a session shared via deep link.
                 roomId = deepLinkRoomId
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = false) }
@@ -178,7 +181,7 @@ class PlayerViewModel
             } else {
                 // Host mode: generate a new session ID and join as the host so that
                 // join_room / leave_room are emitted via SessionRepositoryImpl.
-                roomId = UUID.randomUUID().toString()
+                roomId = deepLinkRoomId ?: UUID.randomUUID().toString()
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
 
@@ -410,6 +413,7 @@ class PlayerViewModel
         }
 
         fun onPlayerError() {
+            AppLogger.w(TAG, "YouTube player reported an error for videoId=${_uiState.value.videoId}")
             _uiState.update {
                 it.copy(
                     playerLoadError = true,
@@ -816,7 +820,8 @@ class PlayerViewModel
                                 )
                             }
                         },
-                        onFailure = {
+                        onFailure = { error ->
+                            AppLogger.w(TAG, "Video-info lookup failed for videoId=$videoId", error)
                             _uiState.update {
                                 it.copy(
                                     isFetchingVideoInfo = false,
@@ -848,7 +853,8 @@ class PlayerViewModel
                             onSuccess = { items ->
                                 state.copy(isSearching = false, searchResults = items, searchError = false)
                             },
-                            onFailure = {
+                            onFailure = { error ->
+                                AppLogger.w(TAG, "YouTube search failed for query=\"$query\"", error)
                                 state.copy(isSearching = false, searchError = true)
                             },
                         )

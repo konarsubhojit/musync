@@ -82,11 +82,14 @@ describe('MuSync server', () => {
   // ── YouTube search proxy ──────────────────────────────────────────────────
   describe('GET /api/youtube/search', () => {
     const originalApiKey = process.env.YOUTUBE_API_KEY;
+    const originalSearchTimeout = process.env.YOUTUBE_SEARCH_TIMEOUT_MS;
     const originalFetch = global.fetch;
 
     afterEach(() => {
       if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
       else process.env.YOUTUBE_API_KEY = originalApiKey;
+      if (originalSearchTimeout === undefined) delete process.env.YOUTUBE_SEARCH_TIMEOUT_MS;
+      else process.env.YOUTUBE_SEARCH_TIMEOUT_MS = originalSearchTimeout;
       // Restore the global fetch if it was replaced
       global.fetch = originalFetch;
     });
@@ -157,6 +160,20 @@ describe('MuSync server', () => {
         expect.stringContaining('q=test+song'),
         expect.objectContaining({ signal: expect.any(Object) }),
       );
+    });
+
+    it('uses YOUTUBE_SEARCH_TIMEOUT_MS for search requests when configured', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      process.env.YOUTUBE_SEARCH_TIMEOUT_MS = '1234';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ items: [] }),
+      });
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      const res = await request(app).get('/api/youtube/search?q=test');
+      expect(res.status).toBe(200);
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1234);
+      timeoutSpy.mockRestore();
     });
 
     it('returns 502 when the YouTube API responds with an error status', async () => {
@@ -248,6 +265,22 @@ describe('MuSync server', () => {
         title: 'Me at the zoo',
         channelTitle: 'jawed',
       });
+    });
+
+    it('uses YOUTUBE_VIDEO_INFO_TIMEOUT_MS for video-info requests when configured', async () => {
+      process.env.YOUTUBE_API_KEY = 'fake-key';
+      process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS = '2345';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [{ snippet: { title: 'Me at the zoo', channelTitle: 'jawed' } }],
+        }),
+      });
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      const res = await request(app).get('/api/youtube/video-info/jNQXAC9IVRw');
+      expect(res.status).toBe(200);
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2345);
+      timeoutSpy.mockRestore();
     });
 
     it('serves repeated requests from cache', async () => {

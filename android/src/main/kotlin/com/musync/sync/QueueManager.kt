@@ -2,6 +2,7 @@ package com.musync.sync
 
 import com.musync.data.model.Track
 import com.musync.data.repository.MusicRepository
+import com.musync.logging.AppLogger
 import io.socket.client.Socket
 import org.json.JSONArray
 import javax.inject.Inject
@@ -22,19 +23,24 @@ class QueueManager
         private val socket: Socket,
         private val musicRepository: MusicRepository,
     ) {
+        private val tag = "QueueManager"
+
         /** Registers the [SocketEvents.QUEUE_UPDATED] listener on the socket. */
         fun startListening() {
+            AppLogger.i(tag, "startListening")
             // Remove any existing listener before registering to avoid duplicates.
             socket.off(SocketEvents.QUEUE_UPDATED)
             socket.on(SocketEvents.QUEUE_UPDATED) { args ->
                 val json = args.firstOrNull() as? JSONArray ?: return@on
                 val tracks = parseQueue(json)
+                AppLogger.i(tag, "recv QUEUE_UPDATED parsedCount=${tracks.size}")
                 musicRepository.updateQueue(tracks)
             }
         }
 
         /** Removes the [SocketEvents.QUEUE_UPDATED] listener from the socket. */
         fun stopListening() {
+            AppLogger.i(tag, "stopListening")
             socket.off(SocketEvents.QUEUE_UPDATED)
         }
 
