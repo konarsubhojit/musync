@@ -45,13 +45,15 @@ class YouTubeSearchRepositoryImpl
                         val results =
                             buildList {
                                 for (i in 0 until itemsArray.length()) {
-                                    val item = itemsArray.getJSONObject(i)
+                                    val item = itemsArray.optJSONObject(i) ?: continue
+                                    val videoId = item.optString("videoId").trim()
+                                    if (videoId.isEmpty()) continue
                                     add(
                                         YouTubeSearchResult(
-                                            videoId = item.getString("videoId"),
-                                            title = item.getString("title"),
-                                            channelTitle = item.getString("channelTitle"),
-                                            thumbnailUrl = item.getString("thumbnailUrl"),
+                                            videoId = videoId,
+                                            title = item.optString("title"),
+                                            channelTitle = item.optString("channelTitle"),
+                                            thumbnailUrl = item.optString("thumbnailUrl"),
                                         ),
                                     )
                                 }

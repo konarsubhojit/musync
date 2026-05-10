@@ -11,6 +11,12 @@ object RoomLinkParser {
     /** Matches the trailing `/room/<id>` segment of an invite link. */
     private val LINK_PATTERN = Regex("""/room/([A-Za-z0-9_-]+)""")
 
+    /** Strict UUID matcher for room IDs shared by MuSync links. */
+    private val UUID_PATTERN =
+        Regex(
+            """(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$""",
+        )
+
     /** Allowed characters and shape for a bare room code/UUID. */
     private val BARE_PATTERN = Regex("""^[A-Za-z0-9_-]{4,}$""")
 
@@ -35,26 +41,34 @@ object RoomLinkParser {
         val urlMatch = URL_PATTERN.find(trimmed)
         val target = urlMatch?.value ?: trimmed
 
-        // Try /room/<id> pattern first — preserves existing precedence.
-        LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
-
         if (urlMatch != null) {
-            // Fall back to the last non-empty path segment of the URL.
-            val lastSegment =
+            val pathSegments =
                 try {
                     URI(target).path
                         ?.split("/")
-                        ?.lastOrNull { it.isNotEmpty() }
+                        ?.filter { it.isNotEmpty() }
                 } catch (e: URISyntaxException) {
                     null
                 }
-            if (lastSegment != null && BARE_PATTERN.matches(lastSegment)) {
-                return lastSegment
+            if (pathSegments != null) {
+                // Accept UUID anywhere in path (works for both /room/<uuid> and /<uuid> links).
+                val uuidSegment = pathSegments.firstOrNull { UUID_PATTERN.matches(it) }
+                if (uuidSegment != null) return uuidSegment
+
+                // Preserve existing `/room/<id>` parsing when no UUID is present.
+                LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
+
+                // Backward-compatible fallback for non-UUID room IDs.
+                val lastSegment = pathSegments.lastOrNull()
+                if (lastSegment != null && BARE_PATTERN.matches(lastSegment)) {
+                    return lastSegment
+                }
             }
             return null
         }
 
         // No URL found — fall through to bare-pattern check on the trimmed string.
+        if (UUID_PATTERN.matches(trimmed)) return trimmed
         if (BARE_PATTERN.matches(trimmed)) return trimmed
         return null
     }

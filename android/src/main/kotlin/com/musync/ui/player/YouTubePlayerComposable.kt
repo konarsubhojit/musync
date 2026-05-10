@@ -47,6 +47,9 @@ fun YouTubePlayerComposable(
             val options =
                 IFramePlayerOptions.Builder()
                     .controls(0)
+                    .rel(0)
+                    .fullscreen(0)
+                    .origin("https://www.youtube.com")
                     .build()
 
             YouTubePlayerView(context).also { view ->
