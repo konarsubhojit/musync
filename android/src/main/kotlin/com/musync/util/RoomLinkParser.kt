@@ -11,7 +11,11 @@ object RoomLinkParser {
     /** Matches the trailing `/room/<id>` segment of an invite link. */
     private val LINK_PATTERN = Regex("""/room/([A-Za-z0-9_-]+)""")
 
-    /** Strict UUID matcher for room IDs shared by MuSync links. */
+    /**
+     * Strict UUID matcher for room IDs shared by MuSync links.
+     * - Group 3 (`[1-5]`) enforces RFC 4122 version bits.
+     * - Group 4 (`[89ab]`) enforces RFC 4122 variant bits.
+     */
     private val UUID_PATTERN =
         Regex(
             """(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$""",
