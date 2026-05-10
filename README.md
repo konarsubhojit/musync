@@ -9,17 +9,30 @@ defaults below — which target the local emulator-to-host setup — are used.
 | Property                 | Default                                  | Purpose                                                                 |
 | ------------------------ | ---------------------------------------- | ----------------------------------------------------------------------- |
 | `SERVER_URL`             | `http://10.0.2.2:3000`                   | Signalling server base URL injected into `BuildConfig.SERVER_URL`.      |
-| `INVITE_LINK_BASE_URL`   | `https://listen.yourdomain.com/room`     | Base URL used to build invite deep links.                               |
-| `INVITE_LINK_HOST`       | `listen.yourdomain.com`                  | Host applied to the deep-link `<intent-filter>` in `AndroidManifest.xml`. |
+| `INVITE_LINK_BASE_URL`   | `https://listen.yourdomain.com/room`     | Base URL used to build invite deep links. **Must include the `/room` path segment.** The app appends `/<roomId>` to produce the final link. |
+| `INVITE_LINK_HOST`       | *(derived from `INVITE_LINK_BASE_URL`)*  | Bare hostname for the deep-link `<intent-filter>` in `AndroidManifest.xml`. Usually **does not need to be set** — it is extracted from `INVITE_LINK_BASE_URL` automatically. Must be a plain hostname only — no `https://` prefix, no port, no path. |
+
+> **How the invite link is built:** `PlayerViewModel` constructs the invite link as
+> `"$INVITE_LINK_BASE_URL/$roomId"` — for example `https://api.example.com/room/abc-123`.
+> `INVITE_LINK_HOST` is **not** used for link construction; it only controls which
+> host the Android OS intercepts to open the app directly.
 
 Override locally:
 
 ```sh
 ./gradlew :android:assembleDebug \
   -PSERVER_URL=https://api.example.com \
-  -PINVITE_LINK_BASE_URL=https://listen.example.com/room \
-  -PINVITE_LINK_HOST=listen.example.com
+  -PINVITE_LINK_BASE_URL=https://api.example.com/room \
+  -PINVITE_LINK_HOST=api.example.com
 ```
+
+### Common misconfigurations
+
+| Mistake | Symptom | Correct value |
+| --- | --- | --- |
+| `INVITE_LINK_BASE_URL` missing `/room` (e.g. `https://host.example.com`) | Invite link is `https://host.example.com/<uuid>` — parser falls back to last path segment (resilient), but the server landing page and App Links verification won't match | `https://host.example.com/room` |
+| `INVITE_LINK_HOST` set to a full URL (e.g. `https://host.example.com`) | `android:host` in the manifest becomes invalid — clicking a shared link opens the browser instead of the app | `host.example.com` (bare hostname only — **auto-derived, usually leave unset**) |
+| `SERVER_URL` includes a non-standard port (e.g. `https://host.example.com:3000`) when using a reverse proxy like Render | All server requests fail — Render (and most hosts) terminate TLS on port 443 and the internal port is not exposed | `https://host.example.com` (no port) |
 
 ### CI configuration
 
@@ -34,7 +47,7 @@ Configure them under
 
 - `vars.SERVER_URL`
 - `vars.INVITE_LINK_BASE_URL`
-- `vars.INVITE_LINK_HOST`
+- `vars.INVITE_LINK_HOST` *(optional — auto-derived from `INVITE_LINK_BASE_URL`)*
 
 Use `secrets.*` (and reference them the same way in the workflow) for any
 value that must not be exposed in logs.
@@ -78,7 +91,7 @@ Set that fingerprint (and your release fingerprint if applicable) as
 
 ### Using the same host for the API and invite links
 
-`SERVER_URL` and `INVITE_LINK_HOST` can point to **the same** Node.js
+`SERVER_URL` and `INVITE_LINK_BASE_URL` can point to **the same** Node.js
 deployment.  The server exposes the two routes Android needs for the invite
 flow to work end-to-end:
 
@@ -91,9 +104,13 @@ flow to work end-to-end:
 
 For example, with everything served from `https://api.example.com`:
 
-| Variable               | Value                                  |
-| ---------------------- | -------------------------------------- |
-| `SERVER_URL`           | `https://api.example.com`              |
-| `INVITE_LINK_BASE_URL` | `https://api.example.com/room`         |
-| `INVITE_LINK_HOST`     | `api.example.com`                      |
+| Variable               | Value                                  | Notes |
+| ---------------------- | -------------------------------------- | ----- |
+| `SERVER_URL`           | `https://api.example.com`              | No trailing slash, no port (use 443) |
+| `INVITE_LINK_BASE_URL` | `https://api.example.com/room`         | Must end in `/room` |
+| `INVITE_LINK_HOST`     | `api.example.com`                      | Optional — auto-derived from `INVITE_LINK_BASE_URL` |
+
+The invite link the app shares will be `https://api.example.com/room/<roomId>`.
+When a recipient taps it, the OS matches `https://api.example.com/room/*` against
+the `<intent-filter>` and opens the app directly (once App Links is verified).
 
