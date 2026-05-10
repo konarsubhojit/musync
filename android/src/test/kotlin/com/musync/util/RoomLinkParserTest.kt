@@ -6,6 +6,14 @@ import org.junit.Test
 
 class RoomLinkParserTest {
     @Test
+    fun `bare uuid is returned as-is`() {
+        assertEquals(
+            "32a96396-305a-4bd1-8228-85ac4d8dcb31",
+            RoomLinkParser.extractRoomId("32a96396-305a-4bd1-8228-85ac4d8dcb31"),
+        )
+    }
+
+    @Test
     fun `bare room id is returned as-is`() {
         assertEquals("abcd1234", RoomLinkParser.extractRoomId("abcd1234"))
     }
@@ -67,7 +75,31 @@ class RoomLinkParserTest {
     }
 
     @Test
-    fun `bare uuid url without room segment is parsed`() {
+    fun `room segment is parsed even when extracted url is malformed`() {
+        assertEquals(
+            "abc-123",
+            RoomLinkParser.extractRoomId("Join my MuSync room: https://listen.example.com/room/abc-123\""),
+        )
+    }
+
+    @Test
+    fun `url with room segment and uuid is parsed`() {
+        assertEquals(
+            "f9e83b1f-1111-4a22-9f70-a2e8d6a8f111",
+            RoomLinkParser.extractRoomId("https://musync-5mdf.onrender.com/room/f9e83b1f-1111-4a22-9f70-a2e8d6a8f111"),
+        )
+    }
+
+    @Test
+    fun `url without room segment and uuid is parsed`() {
+        assertEquals(
+            "f9e83b1f-1111-4a22-9f70-a2e8d6a8f111",
+            RoomLinkParser.extractRoomId("https://musync-5mdf.onrender.com/f9e83b1f-1111-4a22-9f70-a2e8d6a8f111"),
+        )
+    }
+
+    @Test
+    fun `non uuid room id in url path without room segment is parsed`() {
         assertEquals(
             "deadbeef-1234",
             RoomLinkParser.extractRoomId("https://host.example.com/deadbeef-1234"),

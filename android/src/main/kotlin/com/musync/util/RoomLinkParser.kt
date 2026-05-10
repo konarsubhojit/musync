@@ -11,6 +11,16 @@ object RoomLinkParser {
     /** Matches the trailing `/room/<id>` segment of an invite link. */
     private val LINK_PATTERN = Regex("""/room/([A-Za-z0-9_-]+)""")
 
+    /**
+     * Strict UUID matcher for room IDs shared by MuSync links.
+     * - The 3rd UUID block starts with `[1-5]` to allow RFC 4122 versions 1-5.
+     * - The 4th UUID block starts with `[89abAB]` to enforce RFC 4122 variant `10`.
+     */
+    private val UUID_PATTERN =
+        Regex(
+            """^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$""",
+        )
+
     /** Allowed characters and shape for a bare room code/UUID. */
     private val BARE_PATTERN = Regex("""^[A-Za-z0-9_-]{4,}$""")
 
@@ -35,26 +45,34 @@ object RoomLinkParser {
         val urlMatch = URL_PATTERN.find(trimmed)
         val target = urlMatch?.value ?: trimmed
 
-        // Try /room/<id> pattern first — preserves existing precedence.
-        LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
-
         if (urlMatch != null) {
-            // Fall back to the last non-empty path segment of the URL.
-            val lastSegment =
+            // Keep /room/<id> parsing resilient even when URI(...) fails on malformed pasted text.
+            LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
+
+            val pathSegments =
                 try {
                     URI(target).path
                         ?.split("/")
-                        ?.lastOrNull { it.isNotEmpty() }
+                        ?.filter { it.isNotEmpty() }
                 } catch (e: URISyntaxException) {
                     null
                 }
-            if (lastSegment != null && BARE_PATTERN.matches(lastSegment)) {
-                return lastSegment
+            if (pathSegments != null) {
+                // Accept the trailing UUID found in the path (covers both /room/<uuid> and /<uuid> links).
+                val uuidSegment = pathSegments.lastOrNull { UUID_PATTERN.matches(it) }
+                if (uuidSegment != null) return uuidSegment
+
+                // Backward-compatible fallback for non-UUID room IDs.
+                val lastSegment = pathSegments.lastOrNull()
+                if (lastSegment != null && BARE_PATTERN.matches(lastSegment)) {
+                    return lastSegment
+                }
             }
             return null
         }
 
         // No URL found — fall through to bare-pattern check on the trimmed string.
+        if (UUID_PATTERN.matches(trimmed)) return trimmed
         if (BARE_PATTERN.matches(trimmed)) return trimmed
         return null
     }
