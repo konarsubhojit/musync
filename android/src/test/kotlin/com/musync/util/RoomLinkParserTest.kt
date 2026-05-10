@@ -75,6 +75,14 @@ class RoomLinkParserTest {
     }
 
     @Test
+    fun `room segment is parsed even when extracted url is malformed`() {
+        assertEquals(
+            "abc-123",
+            RoomLinkParser.extractRoomId("Join my MuSync room: https://listen.example.com/room/abc-123\""),
+        )
+    }
+
+    @Test
     fun `url with room segment and uuid is parsed`() {
         assertEquals(
             "f9e83b1f-1111-4a22-9f70-a2e8d6a8f111",

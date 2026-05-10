@@ -46,6 +46,9 @@ object RoomLinkParser {
         val target = urlMatch?.value ?: trimmed
 
         if (urlMatch != null) {
+            // Keep /room/<id> parsing resilient even when URI(...) fails on malformed pasted text.
+            LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
+
             val pathSegments =
                 try {
                     URI(target).path
@@ -58,9 +61,6 @@ object RoomLinkParser {
                 // Accept the trailing UUID found in the path (covers both /room/<uuid> and /<uuid> links).
                 val uuidSegment = pathSegments.lastOrNull { UUID_PATTERN.matches(it) }
                 if (uuidSegment != null) return uuidSegment
-
-                // Preserve existing `/room/<id>` parsing when no UUID is present.
-                LINK_PATTERN.find(target)?.let { return it.groupValues[1] }
 
                 // Backward-compatible fallback for non-UUID room IDs.
                 val lastSegment = pathSegments.lastOrNull()
