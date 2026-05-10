@@ -12,6 +12,7 @@ hilt = "2.52"
 hiltNavigationCompose = "1.2.0"
 coroutines = "1.9.0"
 androidYouTubePlayer = "12.1.0"
+media = "1.7.0"
 socketIo = "2.1.0"
 okhttp = "4.12.0"
 appcompat = "1.7.0"
@@ -62,6 +63,9 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 # YouTube Player
 android-youtube-player = { group = "com.pierfrancescosoffritti.androidyoutubeplayer", name = "core", version.ref = "androidYouTubePlayer" }
+
+# Media (MediaSessionCompat + NotificationCompat.MediaStyle for background playback notifications)
+androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
 
 # Socket.IO
 socket-io-client = { group = "io.socket", name = "socket.io-client", version.ref = "socketIo" }

@@ -10,5 +10,6 @@ package com.musync.ui.settings
  */
 data class SettingsUiState(
     val isExporting: Boolean = false,
+    val isDarkTheme: Boolean = true,
     val message: String? = null,
 )

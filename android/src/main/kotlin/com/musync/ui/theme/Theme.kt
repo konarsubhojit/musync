@@ -27,19 +27,21 @@ private val LightColorScheme =
         primary = MuSyncPrimary,
         secondary = PurpleGrey40,
         tertiary = Pink40,
-        background = MuSyncBackground,
-        surface = MuSyncSurface,
+        background = MuSyncLightBackground,
+        surface = MuSyncLightSurface,
         onPrimary = MuSyncOnPrimary,
-        onBackground = MuSyncOnBackground,
-        onSurface = MuSyncOnSurface,
+        onBackground = MuSyncLightOnBackground,
+        onSurface = MuSyncLightOnSurface,
+        // Use a darker secondary text colour than Material's default so
+        // small captions / hints meet WCAG AA contrast in light mode (#51).
+        onSurfaceVariant = MuSyncLightOnSurfaceVariant,
         error = MuSyncError,
     )
 
 @Composable
 fun MuSyncTheme(
-    // MuSync uses a branded dark palette by default to ensure the
-    // Spotify-style green / dark-grey identity is present regardless of
-    // the system theme.
+    // Persisted from Settings. Defaults to dark to preserve MuSync's
+    // brand style for existing users.
     darkTheme: Boolean = true,
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = false,

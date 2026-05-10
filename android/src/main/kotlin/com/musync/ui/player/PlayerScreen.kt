@@ -216,6 +216,24 @@ fun PlayerScreen(
         )
     }
 
+    // Wire notification / lock-screen / Bluetooth media controls to the local
+    // YouTube player so the user can pause / resume / skip without opening the
+    // app (#47).  The registration is dropped when this screen leaves
+    // composition or when a new YouTubePlayer instance becomes available.
+    DisposableEffect(youTubePlayer) {
+        val player = youTubePlayer
+        val registration =
+            if (player != null) {
+                viewModel.attachNotificationControls(
+                    onPlay = { player.play() },
+                    onPause = { player.pause() },
+                )
+            } else {
+                null
+            }
+        onDispose { registration?.close() }
+    }
+
     if (uiState.showLeaveConfirmDialog) {
         LeaveRoomConfirmDialog(
             isHost = uiState.isHost,
@@ -880,7 +898,12 @@ private fun PlayerOverlayControls(
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        contentDescription =
+                            if (isPlaying) {
+                                stringResource(R.string.cd_pause)
+                            } else {
+                                stringResource(R.string.cd_play)
+                            },
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )

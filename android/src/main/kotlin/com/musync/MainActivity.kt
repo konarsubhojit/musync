@@ -5,15 +5,22 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.logging.AppLogger
 import com.musync.navigation.MuSyncNavGraph
 import com.musync.ui.theme.MuSyncTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject
+    lateinit var userPreferencesRepository: UserPreferencesRepository
+
     private lateinit var navController: NavController
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,8 +29,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val controller = rememberNavController()
+            val darkThemeEnabled by userPreferencesRepository.darkTheme.collectAsState(initial = true)
             navController = controller
-            MuSyncTheme {
+            MuSyncTheme(darkTheme = darkThemeEnabled) {
                 MuSyncNavGraph(navController = controller)
             }
         }

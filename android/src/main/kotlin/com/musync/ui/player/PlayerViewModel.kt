@@ -15,6 +15,7 @@ import com.musync.data.repository.SessionRepository
 import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.logging.AppLogger
+import com.musync.playback.MediaPlaybackController
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
@@ -43,6 +44,7 @@ class PlayerViewModel
         private val youTubeSearchRepository: YouTubeSearchRepository,
         private val recentRoomsRepository: RecentRoomsRepository,
         private val userPreferencesRepository: UserPreferencesRepository,
+        private val mediaPlaybackController: MediaPlaybackController,
     ) : ViewModel() {
         companion object {
             /**
@@ -226,12 +228,14 @@ class PlayerViewModel
                             playerLoadError = false,
                         )
                     }
+                    publishMediaSession()
                 }
             }
 
             viewModelScope.launch {
                 musicRepository.queue.collect { queue ->
                     _uiState.update { it.copy(queue = queue) }
+                    mediaPlaybackController.updateHasNext(queue.isNotEmpty())
                 }
             }
 
@@ -325,6 +329,9 @@ class PlayerViewModel
             stopHeartbeat()
             playbackSyncReceiver.stopListening()
             videoInfoJob?.cancel()
+            // Tear down the background-playback notification + foreground service
+            // so the user doesn't see a stale "now playing" entry after leaving.
+            mediaPlaybackController.stop()
             // Emit leave_room whenever the ViewModel is destroyed (e.g. system back
             // gesture that bypasses the confirmation dialog).
             sessionRepository.leaveSession()
@@ -354,6 +361,9 @@ class PlayerViewModel
                     playerLoadError = if (isPlaying || isBuffering) false else it.playerLoadError,
                 )
             }
+            // Mirror the local play/pause to the media-style notification so the
+            // lock-screen / Bluetooth controls reflect the current state (#47).
+            publishMediaSession()
             if (!isHost && !isDemocratic) return
 
             val positionMs = (_uiState.value.currentSecond * 1000).toLong()
@@ -384,6 +394,12 @@ class PlayerViewModel
 
         fun onCurrentSecond(second: Float) {
             _uiState.update { it.copy(currentSecond = second) }
+            // Keep the media-session position in sync so the notification's
+            // PlaybackState advances correctly while playing (#47).
+            mediaPlaybackController.updatePlaybackState(
+                isPlaying = _uiState.value.isPlaying,
+                positionMs = (second * 1000).toLong(),
+            )
         }
 
         fun onDurationReceived(duration: Float) {
@@ -531,6 +547,51 @@ class PlayerViewModel
             }
         }
 
+        /**
+         * Registers callbacks that the media-style notification ([MediaPlaybackService])
+         * will invoke when the user taps Play / Pause / Skip from the lock-screen,
+         * status bar, or a Bluetooth headset (#47).  Returned [AutoCloseable] should
+         * be invoked when the player surface goes away to drop the registration.
+         *
+         * The callbacks run on the main thread; implementations should call directly
+         * into the local YouTube player (play / pause / seek).  [onSkipNext] also
+         * routes through [PlayerViewModel.onSkipToNext] so queue-state updates are
+         * broadcast to other room members.
+         */
+        fun attachNotificationControls(
+            onPlay: () -> Unit,
+            onPause: () -> Unit,
+        ): AutoCloseable {
+            val listener =
+                object : MediaPlaybackController.Listener {
+                    override fun onPlay() {
+                        onPlay()
+                    }
+
+                    override fun onPause() {
+                        onPause()
+                    }
+
+                    override fun onSkipNext() {
+                        onSkipToNext()
+                    }
+
+                    override fun onStop() {
+                        // Treat a notification dismiss / Stop as the user
+                        // wanting to leave the room.  Mirrors the back-button
+                        // confirm-then-leave flow but bypasses the dialog
+                        // since it can't be shown from a notification action.
+                        sessionRepository.leaveSession()
+                        _uiState.update { it.copy(navigateBack = true) }
+                        mediaPlaybackController.stop()
+                    }
+                }
+            mediaPlaybackController.setListener(listener)
+            // Make sure the service can pick up the latest known state immediately.
+            publishMediaSession()
+            return AutoCloseable { mediaPlaybackController.clearListener(listener) }
+        }
+
         // ------------------------------------------------------------------
         // Chat
         // ------------------------------------------------------------------
@@ -623,6 +684,33 @@ class PlayerViewModel
                     delay(CONTROLS_AUTO_HIDE_MS)
                     _uiState.update { it.copy(controlsVisible = false) }
                 }
+        }
+
+        /**
+         * Mirrors the current track + play state to [MediaPlaybackController]
+         * so the foreground service can render the media-style notification
+         * with the right metadata and Play/Pause action (#47).
+         */
+        private fun publishMediaSession() {
+            val state = _uiState.value
+            val videoId = state.videoId
+            if (videoId.isBlank()) {
+                mediaPlaybackController.updateTrack(null)
+                return
+            }
+            mediaPlaybackController.updateTrack(
+                MediaPlaybackController.TrackInfo(
+                    id = videoId,
+                    title = state.trackTitle.ifBlank { videoId },
+                    artist = "",
+                    durationMs = (state.duration * 1000).toLong(),
+                ),
+            )
+            mediaPlaybackController.updatePlaybackState(
+                isPlaying = state.isPlaying,
+                positionMs = (state.currentSecond * 1000).toLong(),
+            )
+            mediaPlaybackController.updateHasNext(state.queue.isNotEmpty())
         }
 
         /** Opens the "Add to queue" bottom sheet. */

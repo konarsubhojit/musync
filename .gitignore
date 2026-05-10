@@ -43,3 +43,4 @@ lint/tmp/
 
 # Node.js server
 server/node_modules/
+.android-sdk/

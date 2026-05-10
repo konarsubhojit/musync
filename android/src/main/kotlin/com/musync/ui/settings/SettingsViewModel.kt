@@ -2,15 +2,20 @@ package com.musync.ui.settings
 
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.musync.R
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.logging.AppLogger
 import com.musync.logging.LogExporter
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,9 +28,42 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel
     @Inject
-    constructor() : ViewModel() {
+    constructor(
+        @ApplicationContext private val appContext: Context,
+        private val userPreferencesRepository: UserPreferencesRepository,
+    ) : ViewModel() {
         private val _uiState = MutableStateFlow(SettingsUiState())
         val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+        init {
+            viewModelScope.launch {
+                userPreferencesRepository.darkTheme
+                    .catch { error ->
+                        AppLogger.w(TAG, "Failed to read theme preference", error)
+                        _uiState.update { it.copy(message = string(R.string.settings_theme_load_failed)) }
+                    }
+                    .collect { enabled ->
+                        _uiState.update { it.copy(isDarkTheme = enabled) }
+                    }
+            }
+        }
+
+        fun onDarkThemeToggled(enabled: Boolean) {
+            val previous = _uiState.value.isDarkTheme
+            _uiState.update { it.copy(isDarkTheme = enabled) }
+            viewModelScope.launch {
+                runCatching { userPreferencesRepository.saveDarkTheme(enabled) }
+                    .onFailure { error ->
+                        AppLogger.w(TAG, "Failed to save theme preference", error)
+                        _uiState.update {
+                            it.copy(
+                                isDarkTheme = previous,
+                                message = string(R.string.settings_theme_save_failed),
+                            )
+                        }
+                    }
+            }
+        }
 
         /** Called when the SAF picker returned a folder URI. */
         fun onFolderSelected(
@@ -68,4 +106,8 @@ class SettingsViewModel
         private companion object {
             const val TAG = "SettingsViewModel"
         }
+
+        private fun string(
+            @StringRes resId: Int,
+        ): String = appContext.getString(resId)
     }

@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -35,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -106,6 +110,10 @@ fun SettingsScreen(
                     .padding(PaddingValues(horizontal = 16.dp, vertical = 12.dp)),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            ThemeCard(
+                isDarkTheme = uiState.isDarkTheme,
+                onDarkThemeChanged = viewModel::onDarkThemeToggled,
+            )
             ExportLogsCard(
                 isExporting = uiState.isExporting,
                 onExportClick = {
@@ -113,6 +121,52 @@ fun SettingsScreen(
                     pickFolderLauncher.launch(null)
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun ThemeCard(
+    isDarkTheme: Boolean,
+    onDarkThemeChanged: (Boolean) -> Unit,
+) {
+    val darkModeLabel = stringResource(R.string.settings_theme_dark_mode)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = stringResource(R.string.settings_theme_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_theme_description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = darkModeLabel,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Switch(
+                    checked = isDarkTheme,
+                    onCheckedChange = onDarkThemeChanged,
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription = darkModeLabel
+                        },
+                )
+            }
         }
     }
 }

@@ -1038,6 +1038,7 @@ class PlayerViewModelTest {
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
         userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
+        mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(),
         musicRepository,
@@ -1047,6 +1048,7 @@ class PlayerViewModelTest {
         youTubeSearchRepository,
         recentRoomsRepository,
         userPreferencesRepository,
+        mediaPlaybackController,
     )
 
     private fun buildViewModelWithRoomId(
@@ -1058,6 +1060,7 @@ class PlayerViewModelTest {
         youTubeSearchRepository: YouTubeSearchRepository = FakeYouTubeSearchRepository(),
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
         userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
+        mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
@@ -1067,6 +1070,7 @@ class PlayerViewModelTest {
         youTubeSearchRepository,
         recentRoomsRepository,
         userPreferencesRepository,
+        mediaPlaybackController,
     )
 
     // --- Fake repositories ---
@@ -1179,6 +1183,8 @@ class PlayerViewModelTest {
         private val savedName: String = "",
     ) : UserPreferencesRepository {
         override val displayName = flowOf(savedName)
+        override val darkTheme = flowOf(true)
         override suspend fun saveDisplayName(name: String) = Unit
+        override suspend fun saveDarkTheme(enabled: Boolean) = Unit
     }
 }
