@@ -17,6 +17,7 @@ import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.logging.AppLogger
 import com.musync.playback.MediaPlaybackController
 import com.musync.sync.PlaybackSyncReceiver
+import com.musync.sync.QueueManager
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,6 +46,7 @@ class PlayerViewModel
         private val recentRoomsRepository: RecentRoomsRepository,
         private val userPreferencesRepository: UserPreferencesRepository,
         private val mediaPlaybackController: MediaPlaybackController,
+        private val queueManager: QueueManager,
     ) : ViewModel() {
         companion object {
             /**
@@ -185,6 +187,11 @@ class PlayerViewModel
                 _uiState.update { it.copy(inviteLink = "$INVITE_LINK_BASE_URL/$roomId", isHost = true) }
             }
 
+            // Ensure queue updates from the server are received regardless of whether
+            // HomeViewModel (which also starts QueueManager) is active.  This is
+            // critical for guests who open the app via a deep-link, bypassing Home.
+            queueManager.startListening()
+
             // Record this room in the local history so the user can rejoin later.
             recentRoomsRepository.addOrUpdateRoom(
                 roomId = roomId,
@@ -290,6 +297,18 @@ class PlayerViewModel
                         is SyncEvent.RoomJoinFailed -> {
                             _uiState.update { it.copy(transientError = PlayerTransientError.ROOM_JOIN_FAILED) }
                         }
+                        is SyncEvent.RoomStateReceived -> {
+                            // Apply the server's room state for guests joining an active session
+                            // so they load the correct video without waiting for a PLAY event.
+                            if (!isHost) {
+                                val serverVideoId = event.videoId
+                                if (!serverVideoId.isNullOrBlank()) {
+                                    _uiState.update {
+                                        it.copy(videoId = serverVideoId, playerLoadError = false)
+                                    }
+                                }
+                            }
+                        }
                         is SyncEvent.PlayNext -> loadNextTrack()
                         is SyncEvent.MembersSnapshot -> Unit // count now derived from participants list
                         is SyncEvent.PeerJoined -> showPresenceEvent(PresenceEvent.PeerJoined)
@@ -334,6 +353,7 @@ class PlayerViewModel
             super.onCleared()
             stopHeartbeat()
             playbackSyncReceiver.stopListening()
+            queueManager.stopListening()
             videoInfoJob?.cancel()
             // Tear down the background-playback notification + foreground service
             // so the user doesn't see a stale "now playing" entry after leaving.
@@ -800,7 +820,10 @@ class PlayerViewModel
                         onSuccess = { info ->
                             musicRepository.addToQueue(
                                 Track(
-                                    id = UUID.randomUUID().toString(),
+                                    // Use the YouTube video ID as the track ID so that
+                                    // the server can broadcast it to guests as the
+                                    // currentVideo.id they can load directly.
+                                    id = videoId,
                                     title = info.title,
                                     artist = info.channelTitle,
                                     youtubeVideoId = videoId,
@@ -878,7 +901,9 @@ class PlayerViewModel
             videoInfoJob = null
             musicRepository.addToQueue(
                 Track(
-                    id = UUID.randomUUID().toString(),
+                    // Use the YouTube video ID as the track ID so the server can
+                    // broadcast it to guests as the currentVideo.id they can load.
+                    id = result.videoId,
                     title = result.title,
                     artist = result.channelTitle,
                     youtubeVideoId = result.videoId,

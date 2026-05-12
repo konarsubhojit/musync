@@ -207,6 +207,93 @@ class CreateRoomViewModelTest {
             assertNull(state.videoTitle)
         }
 
+    // ── YouTube search tests ──────────────────────────────────────────────────
+
+    @Test
+    fun `onSearch populates searchResults on success`() =
+        runTest {
+            val searchResult =
+                YouTubeSearchResult(
+                    videoId = "abc123",
+                    title = "Awesome Track",
+                    channelTitle = "Some Channel",
+                    thumbnailUrl = "https://example.com/thumb.jpg",
+                )
+            val repo = FakeYouTubeSearchRepository(searchResults = listOf(searchResult))
+            val viewModel = buildViewModel(youTubeRepository = repo)
+            viewModel.onUrlChanged("Awesome Track")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertEquals(1, state.searchResults.size)
+            assertEquals("abc123", state.searchResults[0].videoId)
+            assertFalse(state.isSearching)
+            assertFalse(state.searchError)
+        }
+
+    @Test
+    fun `onSearch sets searchError on failure`() =
+        runTest {
+            val repo = FakeYouTubeSearchRepository(searchResult = Result.failure(Exception("network error")))
+            val viewModel = buildViewModel(youTubeRepository = repo)
+            viewModel.onUrlChanged("query")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertTrue(state.searchError)
+            assertFalse(state.isSearching)
+            assertTrue(state.searchResults.isEmpty())
+        }
+
+    @Test
+    fun `onSearch is a no-op when input is blank`() =
+        runTest {
+            val viewModel = buildViewModel()
+            viewModel.onSearch()
+            advanceUntilIdle()
+            val state = viewModel.uiState.value
+            assertFalse(state.isSearching)
+            assertTrue(state.searchResults.isEmpty())
+        }
+
+    @Test
+    fun `onSearchResultSelected sets videoId and clears search results`() =
+        runTest {
+            val result =
+                YouTubeSearchResult(
+                    videoId = "xyz789",
+                    title = "Cool Video",
+                    channelTitle = "A Channel",
+                    thumbnailUrl = "",
+                )
+            val viewModel = buildViewModel()
+            viewModel.onSearchResultSelected(result)
+            val state = viewModel.uiState.value
+            assertEquals("xyz789", state.videoId)
+            assertEquals("xyz789", state.urlInput)
+            assertEquals("Cool Video", state.videoTitle)
+            assertEquals("A Channel", state.channelTitle)
+            assertTrue(state.searchResults.isEmpty())
+            assertFalse(state.isSearching)
+        }
+
+    @Test
+    fun `onUrlChanged clears search results`() =
+        runTest {
+            val searchResult =
+                YouTubeSearchResult("v1", "T", "C", "")
+            val repo = FakeYouTubeSearchRepository(searchResults = listOf(searchResult))
+            val viewModel = buildViewModel(youTubeRepository = repo)
+            // First populate search results
+            viewModel.onUrlChanged("query")
+            viewModel.onSearch()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.searchResults.isNotEmpty())
+            // Typing in the field should clear them
+            viewModel.onUrlChanged("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+            assertEquals(emptyList<YouTubeSearchResult>(), viewModel.uiState.value.searchResults)
+        }
+
     private fun buildViewModel(
         userPreferencesRepository: UserPreferencesRepository = userPrefs,
         youTubeRepository: YouTubeSearchRepository = youTubeSearchRepository,
@@ -221,8 +308,11 @@ class CreateRoomViewModelTest {
                     channelTitle = "Test channel",
                 ),
             ),
+        private val searchResult: Result<List<YouTubeSearchResult>>? = null,
+        private val searchResults: List<YouTubeSearchResult> = emptyList(),
     ) : YouTubeSearchRepository {
-        override suspend fun search(query: String): Result<List<YouTubeSearchResult>> = Result.success(emptyList())
+        override suspend fun search(query: String): Result<List<YouTubeSearchResult>> =
+            searchResult ?: Result.success(searchResults)
 
         override suspend fun fetchVideoInfo(videoId: String): Result<YouTubeVideoInfo> = result
     }

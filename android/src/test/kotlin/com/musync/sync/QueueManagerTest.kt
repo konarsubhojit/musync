@@ -82,6 +82,31 @@ class QueueManagerTest {
     }
 
     @Test
+    fun `parseQueue falls back to id when youtubeVideoId is absent (server-normalised queue)`() {
+        // The server strips youtubeVideoId and re-broadcasts only {id, title}.
+        // The client must treat id as the YouTube video ID in that case.
+        val json =
+            JSONArray().apply {
+                put(
+                    JSONObject().apply {
+                        put("id", "jNQXAC9IVRw")
+                        put("title", "Me at the zoo")
+                        // youtubeVideoId deliberately omitted to simulate server-normalised payload
+                    },
+                )
+            }
+
+        val result = sut.parseQueue(json)
+
+        assertEquals(1, result.size)
+        with(result[0]) {
+            assertEquals("jNQXAC9IVRw", id)
+            assertEquals("jNQXAC9IVRw", youtubeVideoId) // falls back to id
+            assertEquals("Me at the zoo", title)
+        }
+    }
+
+    @Test
     fun `parseQueue skips entries with empty id`() {
         val json =
             JSONArray().apply {
@@ -96,17 +121,18 @@ class QueueManagerTest {
     }
 
     @Test
-    fun `parseQueue skips entries with empty youtubeVideoId`() {
+    fun `parseQueue uses explicit youtubeVideoId when present even if id differs`() {
+        // Full track payload from the host (before server normalisation)
         val json =
             JSONArray().apply {
-                put(trackJson("1", "No Vid", "Artist", "", 60_000L))
-                put(trackJson("2", "Valid", "Artist", "vid2", 60_000L))
+                put(trackJson("uuid-123", "Song", "Artist", "jNQXAC9IVRw", 60_000L))
             }
 
         val result = sut.parseQueue(json)
 
         assertEquals(1, result.size)
-        assertEquals("2", result[0].id)
+        assertEquals("uuid-123", result[0].id)
+        assertEquals("jNQXAC9IVRw", result[0].youtubeVideoId)
     }
 
     @Test

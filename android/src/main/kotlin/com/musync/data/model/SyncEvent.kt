@@ -41,4 +41,17 @@ sealed class SyncEvent {
     data class ConnectionStateChanged(val state: ConnectionState) : SyncEvent()
 
     data class RoomJoinFailed(val reason: String?) : SyncEvent()
+
+    /**
+     * Emitted when the server sends the current room state in the join_room ack.
+     * Carries the YouTube video ID that the room is currently playing and the
+     * server-reported playback position, so joining guests can sync immediately.
+     *
+     * [videoId] is null when the room has not started playing anything yet.
+     * [positionMs] is null when the server has no recorded position.
+     */
+    data class RoomStateReceived(
+        val videoId: String?,
+        val positionMs: Long?,
+    ) : SyncEvent()
 }

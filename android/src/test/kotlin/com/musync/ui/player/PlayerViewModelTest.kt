@@ -1058,6 +1058,7 @@ class PlayerViewModelTest {
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
         userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
         mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
+        queueManager: com.musync.sync.QueueManager = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(),
         musicRepository,
@@ -1068,6 +1069,7 @@ class PlayerViewModelTest {
         recentRoomsRepository,
         userPreferencesRepository,
         mediaPlaybackController,
+        queueManager,
     )
 
     private fun buildViewModelWithRoomId(
@@ -1080,6 +1082,7 @@ class PlayerViewModelTest {
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
         userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
         mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
+        queueManager: com.musync.sync.QueueManager = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId)),
         musicRepository,
@@ -1090,6 +1093,7 @@ class PlayerViewModelTest {
         recentRoomsRepository,
         userPreferencesRepository,
         mediaPlaybackController,
+        queueManager,
     )
 
     private fun buildViewModelWithRoomIdAndVideoId(
@@ -1103,6 +1107,7 @@ class PlayerViewModelTest {
         recentRoomsRepository: RecentRoomsRepository = FakeRecentRoomsRepository(),
         userPreferencesRepository: UserPreferencesRepository = FakeUserPreferencesRepository(),
         mediaPlaybackController: com.musync.playback.MediaPlaybackController = mockk(relaxed = true),
+        queueManager: com.musync.sync.QueueManager = mockk(relaxed = true),
     ) = PlayerViewModel(
         SavedStateHandle(mapOf("roomId" to roomId, "videoId" to videoId)),
         musicRepository,
@@ -1113,6 +1118,7 @@ class PlayerViewModelTest {
         recentRoomsRepository,
         userPreferencesRepository,
         mediaPlaybackController,
+        queueManager,
     )
 
     // --- Fake repositories ---
