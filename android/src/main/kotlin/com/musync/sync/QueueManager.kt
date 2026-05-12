@@ -58,8 +58,11 @@ class QueueManager
             for (i in 0 until json.length()) {
                 val obj = json.optJSONObject(i) ?: continue
                 val id = obj.optString("id")
-                val youtubeVideoId = obj.optString("youtubeVideoId")
-                if (id.isEmpty() || youtubeVideoId.isEmpty()) continue
+                if (id.isEmpty()) continue
+                // The server normalises queue entries to {id, title} only, stripping
+                // youtubeVideoId.  Fall back to id so guests can still load the video,
+                // because the host serialises the YouTube video ID as the track id.
+                val youtubeVideoId = obj.optString("youtubeVideoId").takeIf { it.isNotEmpty() } ?: id
                 tracks.add(
                     Track(
                         id = id,

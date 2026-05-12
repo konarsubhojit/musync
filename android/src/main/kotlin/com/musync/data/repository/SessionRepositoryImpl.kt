@@ -221,6 +221,22 @@ class SessionRepositoryImpl
                     }
                     val memberCount = data.optInt("memberCount", 1)
                     _events.tryEmit(SyncEvent.MembersSnapshot(memberCount))
+                    // Parse the server's room state so guests can load the correct video
+                    // and seek to the current position without waiting for a PLAY event.
+                    val stateData = data.optJSONObject("state")
+                    if (stateData != null) {
+                        val videoId =
+                            stateData
+                                .optJSONObject("currentVideo")
+                                ?.optString("id")
+                                ?.takeIf { it.isNotBlank() }
+                        val positionMs =
+                            stateData
+                                .optLong("positionMs", -1L)
+                                .takeIf { it >= 0 }
+                        AppLogger.i(TAG, "join_room ack state videoId=$videoId positionMs=$positionMs")
+                        _events.tryEmit(SyncEvent.RoomStateReceived(videoId, positionMs))
+                    }
                 },
             )
         }

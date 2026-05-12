@@ -2,6 +2,7 @@ package com.musync.ui.createroom
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.logging.AppLogger
@@ -21,7 +22,8 @@ import kotlin.random.Random
 /**
  * ViewModel backing [CreateRoomScreen].  Parses the YouTube URL the user types,
  * reports validation state in real-time, and produces the session/video IDs
- * required to navigate to the player.
+ * required to navigate to the player.  Also supports searching YouTube by keyword
+ * so users can find videos without pasting a link.
  *
  * The user's display name is loaded from [UserPreferencesRepository] on init
  * and saved back when the room is started.
@@ -41,6 +43,7 @@ class CreateRoomViewModel
             )
         val uiState: StateFlow<CreateRoomUiState> = _uiState.asStateFlow()
         private var videoInfoJob: Job? = null
+        private var searchJob: Job? = null
 
         init {
             // Pre-fill the display name field with the value saved from the last session.
@@ -56,10 +59,12 @@ class CreateRoomViewModel
             }
         }
 
-        /** Called whenever the URL field text changes.  Re-parses and updates validation. */
+        /** Called whenever the URL/search field text changes.  Re-parses and updates validation. */
         fun onUrlChanged(input: String) {
             videoInfoJob?.cancel()
             videoInfoJob = null
+            searchJob?.cancel()
+            searchJob = null
             val videoId = YouTubeUrlParser.extractVideoId(input)
             _uiState.update {
                 it.copy(
@@ -70,6 +75,9 @@ class CreateRoomViewModel
                     isFetchingVideoInfo = videoId != null,
                     videoInfoError = false,
                     urlError = input.isNotBlank() && videoId == null,
+                    searchResults = emptyList(),
+                    searchError = false,
+                    isSearching = false,
                 )
             }
             if (videoId == null) {
@@ -106,6 +114,70 @@ class CreateRoomViewModel
         /** Called when the user edits the display-name field. */
         fun onDisplayNameChanged(input: String) {
             _uiState.update { it.copy(displayName = input) }
+        }
+
+        /**
+         * Searches YouTube for the current [CreateRoomUiState.urlInput] as a query.
+         * No-op when the input is blank.  Cancels any in-flight search before starting
+         * a new one so stale results cannot overwrite newer ones.
+         */
+        fun onSearch() {
+            val query = _uiState.value.urlInput.trim()
+            if (query.isEmpty()) return
+            videoInfoJob?.cancel()
+            videoInfoJob = null
+            searchJob?.cancel()
+            _uiState.update {
+                it.copy(
+                    isSearching = true,
+                    searchError = false,
+                    searchResults = emptyList(),
+                    videoId = null,
+                    videoTitle = null,
+                    channelTitle = null,
+                    urlError = false,
+                )
+            }
+            searchJob =
+                viewModelScope.launch {
+                    val result = youTubeSearchRepository.search(query)
+                    _uiState.update { state ->
+                        result.fold(
+                            onSuccess = { items ->
+                                state.copy(isSearching = false, searchResults = items, searchError = false)
+                            },
+                            onFailure = { error ->
+                                AppLogger.w(TAG, "YouTube search failed for query=\"$query\"", error)
+                                state.copy(isSearching = false, searchError = true)
+                            },
+                        )
+                    }
+                }
+        }
+
+        /**
+         * Called when the user taps a search result.  Populates the video fields from
+         * the result and clears the search results list so only the preview card is shown.
+         */
+        fun onSearchResultSelected(result: YouTubeSearchResult) {
+            searchJob?.cancel()
+            searchJob = null
+            videoInfoJob?.cancel()
+            videoInfoJob = null
+            _uiState.update {
+                it.copy(
+                    urlInput = result.videoId,
+                    videoId = result.videoId,
+                    videoTitle = result.title,
+                    channelTitle = result.channelTitle,
+                    isFetchingVideoInfo = false,
+                    videoInfoError = false,
+                    urlError = false,
+                    isSearching = false,
+                    searchResults = emptyList(),
+                    searchError = false,
+                )
+            }
         }
 
         /**
