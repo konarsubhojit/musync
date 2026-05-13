@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.musync"
-    compileSdk = 34
+    compileSdk = 35
 
     /**
      * Build-time configuration values.

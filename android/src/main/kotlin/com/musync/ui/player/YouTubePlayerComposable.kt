@@ -45,11 +45,11 @@ fun YouTubePlayerComposable(
     val youTubePlayerView =
         remember(context) {
             val options =
-                IFramePlayerOptions.Builder()
+                IFramePlayerOptions.Builder(context)
                     .controls(0)
                     .rel(0)
                     .fullscreen(0)
-                    .origin("https://www.youtube.com")
+                    .origin("https://www.youtube-nocookie.com")
                     .build()
 
             YouTubePlayerView(context).also { view ->
