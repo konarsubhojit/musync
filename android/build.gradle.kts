@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.musync"
-    compileSdk = 34
+    compileSdk = 35
 
     /**
      * Build-time configuration values.
@@ -177,6 +177,16 @@ android {
             // Return default values (0 / null / false) for stubbed Android framework
             // methods such as android.util.Log.* used by AppLogger, instead of throwing.
             isReturnDefaultValues = true
+        }
+    }
+
+    // Rename the output APK from the generic "app-<variant>.apk" to
+    // "musync-<versionName>-<variant>.apk" (e.g. "musync-1.0-debug.apk").
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output?.outputFileName = "musync-${variant.versionName}-${variant.buildType.name}.apk"
         }
     }
 }

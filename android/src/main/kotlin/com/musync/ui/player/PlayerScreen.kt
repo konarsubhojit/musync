@@ -482,7 +482,7 @@ private fun PlayerVideoArea(
     onTrackEnded: () -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDurationReceived: (Float) -> Unit,
-    onPlayerError: () -> Unit,
+    onPlayerError: (PlayerConstants.PlayerError) -> Unit,
     onRetryVideoLoad: () -> Unit,
     onUserSeeked: (Long) -> Unit,
     onSkipToNext: () -> Unit,
@@ -516,7 +516,7 @@ private fun PlayerVideoArea(
                         onTrackEnded()
                     }
                 },
-                onError = { onPlayerError() },
+                onError = { error -> onPlayerError(error) },
                 onCurrentSecond = onCurrentSecond,
                 onDuration = onDurationReceived,
                 modifier = Modifier.fillMaxSize(),

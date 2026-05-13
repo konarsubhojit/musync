@@ -2,7 +2,7 @@
 
 The in-app YouTube player is powered by the
 [android-youtube-player](https://github.com/PierfrancescosoftFritti/android-youtube-player)
-library (v12.1.0), which embeds a YouTube iFrame inside an Android WebView.
+library (v13.0.0), which embeds a YouTube iFrame inside an Android WebView.
 **No YouTube API key is required for playback** — the player talks directly
 to YouTube's iFrame API.
 
@@ -48,15 +48,18 @@ IFramePlayerOptions.Builder()
     .controls(0)   // hide native controls — custom overlay is used instead
     .rel(0)        // suppress "related videos" at end of playback
     .fullscreen(0) // fullscreen handled by the app, not the iFrame
-    .origin("https://www.youtube.com")
+    .origin("https://www.youtube-nocookie.com")
     .build()
 ```
 
-Setting `origin` is needed to prevent error **152** (`UNKNOWN`) that some
+Setting `origin` is needed to prevent errors **152** and **153** (`UNKNOWN`) that some
 devices report when the iFrame cannot establish a trusted communication
-channel with the host page.  Using `"https://www.youtube.com"` is the
+channel with the host page.  Using `"https://www.youtube-nocookie.com"` is the
 recommended workaround for WebView-based embeds where the host page origin
-is `file://` or `null`.
+is `file://` or `null`.  The `youtube-nocookie.com` domain is YouTube's
+privacy-enhanced embed endpoint and is also accepted by the IFrame API as a
+valid `postMessage` target, fixing the error 153 variants seen on newer
+Android WebView versions.
 
 ---
 
@@ -67,6 +70,7 @@ is `file://` or `null`.
 | `100` | Video not found or removed | Use a different video ID |
 | `101` / `150` | Video owner disallows embedded playback | Use a video that permits embedding |
 | `152` / `UNKNOWN` | iFrame communication failure | Already mitigated by the `origin` parameter above; ensure internet access |
+| `153` / `UNKNOWN` | iFrame `postMessage` rejected by newer WebView | Already mitigated by switching `origin` to `https://www.youtube-nocookie.com` |
 | `HTML_5_PLAYER_ERROR` (5) | WebView cannot render the iFrame | Update Android System WebView; test on a different device/emulator |
 | Black screen, no error callback | WebView blocked by a VPN, firewall, or cleartext policy | Check connectivity; ensure YouTube HTTPS endpoints are reachable |
 
