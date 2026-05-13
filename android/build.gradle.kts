@@ -179,16 +179,6 @@ android {
             isReturnDefaultValues = true
         }
     }
-
-    // Rename the output APK from the generic "app-<variant>.apk" to
-    // "musync-<versionName>-<variant>.apk" (e.g. "musync-1.0-debug.apk").
-    applicationVariants.all {
-        val variant = this
-        outputs.all {
-            val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            output?.outputFileName = "musync-${variant.versionName}-${variant.buildType.name}.apk"
-        }
-    }
 }
 
 dependencies {

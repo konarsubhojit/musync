@@ -86,10 +86,13 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :android:testDebugUnitTest
 
-      - name: Extract version name
+      - name: Extract version name and rename APK
         id: version
         run: |
-          echo "name=$(grep 'versionName\s*=' android/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+          VERSION=$(awk -F'"' '/versionName[[:space:]]*=/ {print $2; exit}' android/build.gradle.kts)
+          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
+          APK=$(find android/build/outputs/apk/debug/ -name "*.apk" | head -1)
+          mv "$APK" "android/build/outputs/apk/debug/musync-${VERSION}-debug.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
