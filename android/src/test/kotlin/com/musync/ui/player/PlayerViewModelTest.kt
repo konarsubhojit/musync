@@ -17,7 +17,6 @@ import com.musync.data.repository.UserPreferencesRepository
 import com.musync.data.repository.YouTubeSearchRepository
 import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.SyncEmitter
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
@@ -882,7 +881,7 @@ class PlayerViewModelTest {
             val viewModel = buildHostViewModel()
             assertFalse(viewModel.uiState.value.playerLoadError)
             val beforeRetryNonce = viewModel.uiState.value.playerReloadNonce
-            viewModel.onPlayerError(PlayerConstants.PlayerError.UNKNOWN)
+            viewModel.onPlayerError(YTPlayerError.UNKNOWN)
             assertTrue(viewModel.uiState.value.playerLoadError)
             viewModel.onRetryVideoLoad()
             assertFalse(viewModel.uiState.value.playerLoadError)

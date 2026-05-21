@@ -117,8 +117,6 @@ import com.musync.data.model.ConnectionState
 import com.musync.data.model.Participant
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 
 private const val PLAYER_ERROR_BACKGROUND_ALPHA = 0.72f
 
@@ -154,7 +152,7 @@ fun PlayerScreen(
     onBack: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var youTubePlayer by remember { mutableStateOf<YouTubePlayer?>(null) }
+    var youTubePlayer by remember { mutableStateOf<YTPlayerController?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -474,15 +472,15 @@ fun PlayerScreen(
 @Composable
 private fun PlayerVideoArea(
     uiState: PlayerUiState,
-    youTubePlayer: YouTubePlayer?,
-    onPlayerReady: (YouTubePlayer) -> Unit,
+    youTubePlayer: YTPlayerController?,
+    onPlayerReady: (YTPlayerController) -> Unit,
     onVideoTapped: () -> Unit,
     onControlsInteraction: () -> Unit,
     onPlaybackStateChanged: (isPlaying: Boolean, isBuffering: Boolean) -> Unit,
     onTrackEnded: () -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDurationReceived: (Float) -> Unit,
-    onPlayerError: (PlayerConstants.PlayerError) -> Unit,
+    onPlayerError: (YTPlayerError) -> Unit,
     onRetryVideoLoad: () -> Unit,
     onUserSeeked: (Long) -> Unit,
     onSkipToNext: () -> Unit,
@@ -509,10 +507,10 @@ private fun PlayerVideoArea(
                 onPlayerReady = onPlayerReady,
                 onStateChange = { state ->
                     onPlaybackStateChanged(
-                        state == PlayerConstants.PlayerState.PLAYING,
-                        state == PlayerConstants.PlayerState.BUFFERING,
+                        state == YTPlayerState.PLAYING,
+                        state == YTPlayerState.BUFFERING,
                     )
-                    if (state == PlayerConstants.PlayerState.ENDED) {
+                    if (state == YTPlayerState.ENDED) {
                         onTrackEnded()
                     }
                 },

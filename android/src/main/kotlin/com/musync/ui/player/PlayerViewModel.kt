@@ -20,7 +20,6 @@ import com.musync.sync.PlaybackSyncReceiver
 import com.musync.sync.QueueManager
 import com.musync.sync.SyncEmitter
 import com.musync.util.YouTubeUrlParser
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -433,7 +432,7 @@ class PlayerViewModel
             _uiState.update { it.copy(duration = duration) }
         }
 
-        fun onPlayerError(error: PlayerConstants.PlayerError) {
+        fun onPlayerError(error: YTPlayerError) {
             AppLogger.w(TAG, "YouTube player reported error=$error for videoId=${_uiState.value.videoId}")
             _uiState.update {
                 it.copy(
