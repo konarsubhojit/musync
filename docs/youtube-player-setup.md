@@ -1,8 +1,8 @@
 # YouTube Player Setup
 
-The in-app YouTube player is powered by the
-[android-youtube-player](https://github.com/PierfrancescosoftFritti/android-youtube-player)
-library (v13.0.0), which embeds a YouTube iFrame inside an Android WebView.
+The in-app YouTube player is powered by a **custom WebView** implementation that loads the
+[YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)
+directly — no third-party wrapper library is required.
 **No YouTube API key is required for playback** — the player talks directly
 to YouTube's iFrame API.
 
@@ -22,44 +22,24 @@ All of these are already satisfied by the default app configuration.
 
 ## How it works
 
-1. `YouTubePlayerView` (a subclass of `FrameLayout`) creates a `WebView` that
-   loads a small HTML page bundled inside the library.
-2. The HTML page embeds the YouTube iFrame Player with `enablejsapi=1` and, optionally,
-   an `origin` parameter (see below).
+1. `YouTubePlayerComposable` creates an Android `WebView` and loads a small
+   inline HTML page that bootstraps the YouTube IFrame Player API.
+2. The HTML page sets `youtube.com` as the `baseURL` (`loadDataWithBaseURL`) so that
+   the IFrame API's `postMessage` cross-origin checks pass without needing an explicit
+   `origin` parameter.
 3. The JavaScript in the page communicates with the Android side via a
-   `JavascriptInterface`.  This is how `onReady`, `onStateChange`, `onError`,
-   and progress callbacks are delivered to Kotlin code.
-4. The composable wrapper (`YouTubePlayerComposable`) registers the view as a
-   `LifecycleObserver` so the embedded player pauses and resumes automatically
-   with the Android lifecycle.
+   `JavascriptInterface` (`AndroidBridge`).  This is how `onReady`, `onStateChange`,
+   `onError`, and progress callbacks are delivered to Kotlin code.
+4. The composable wrapper registers a `DefaultLifecycleObserver` so the WebView pauses
+   and resumes automatically with the Android lifecycle.
 
----
+### Custom types
 
-## The `origin` parameter
-
-The IFrame Player API accepts an optional `origin` query parameter that
-restricts which page can communicate with the player via
-[postMessage](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage).
-
-The current configuration sets:
-
-```kotlin
-IFramePlayerOptions.Builder()
-    .controls(0)   // hide native controls — custom overlay is used instead
-    .rel(0)        // suppress "related videos" at end of playback
-    .fullscreen(0) // fullscreen handled by the app, not the iFrame
-    .origin("https://www.youtube-nocookie.com")
-    .build()
-```
-
-Setting `origin` is needed to prevent errors **152** and **153** (`UNKNOWN`) that some
-devices report when the iFrame cannot establish a trusted communication
-channel with the host page.  Using `"https://www.youtube-nocookie.com"` is the
-recommended workaround for WebView-based embeds where the host page origin
-is `file://` or `null`.  The `youtube-nocookie.com` domain is YouTube's
-privacy-enhanced embed endpoint and is also accepted by the IFrame API as a
-valid `postMessage` target, fixing the error 153 variants seen on newer
-Android WebView versions.
+| Type | Description |
+|---|---|
+| `YTPlayerController` | Interface for `play()`, `pause()`, `seekTo()`, `loadVideo()` |
+| `YTPlayerState` | Enum matching IFrame API state values (`PLAYING`, `PAUSED`, `BUFFERING`, `ENDED`, …) |
+| `YTPlayerError` | Enum mapping IFrame API error codes to named constants |
 
 ---
 
@@ -67,11 +47,11 @@ Android WebView versions.
 
 | Error code | Meaning | Fix |
 |---|---|---|
-| `100` | Video not found or removed | Use a different video ID |
-| `101` / `150` | Video owner disallows embedded playback | Use a video that permits embedding |
-| `152` / `UNKNOWN` | iFrame communication failure | Already mitigated by the `origin` parameter above; ensure internet access |
-| `153` / `UNKNOWN` | iFrame `postMessage` rejected by newer WebView | Already mitigated by switching `origin` to `https://www.youtube-nocookie.com` |
-| `HTML_5_PLAYER_ERROR` (5) | WebView cannot render the iFrame | Update Android System WebView; test on a different device/emulator |
+| `NOT_FOUND` (100) | Video not found or removed | Use a different video ID |
+| `EMBEDDING_NOT_ALLOWED` (101/150) | Video owner disallows embedded playback | Use a video that permits embedding |
+| `HTML5_ERROR` (5) | WebView cannot render the iFrame | Update Android System WebView; test on a different device/emulator |
+| `INVALID_PARAMETER` (2) | Bad videoId or player parameter | Verify the video ID is a valid 11-character YouTube ID |
+| `UNKNOWN` | Unexpected player error | Check internet connectivity; retry with a different video |
 | Black screen, no error callback | WebView blocked by a VPN, firewall, or cleartext policy | Check connectivity; ensure YouTube HTTPS endpoints are reachable |
 
 ---
@@ -91,12 +71,11 @@ the exception is never used.
 
 ## Lifecycle integration
 
-`YouTubePlayerComposable` registers the `YouTubePlayerView` as a lifecycle
-observer (`lifecycle.addObserver(view)`) so the player automatically:
+`YouTubePlayerComposable` registers a `DefaultLifecycleObserver` so the player automatically:
 
-- **pauses** when the Activity goes to the background
-- **resumes** when the Activity returns to the foreground
-- **releases** its WebView when the composable leaves the composition
+- **pauses** when the Activity goes to the background (`onPause`)
+- **resumes** the WebView when the Activity returns (`onResume`)
+- **destroys** the WebView when the composable leaves the composition
 
 For background audio, MuSync uses `MediaPlaybackService` (a foreground
 service) which bridges the notification controls to the YouTube player while
@@ -112,8 +91,8 @@ for details.
 2. Build and install the debug APK on an emulator with Google Play APIs
    (so WebView is up-to-date).
 3. Create a room and enter any public YouTube video link or ID.
-4. Confirm the player loads and plays.  If you see error 152, ensure the
-   device has internet access and try a different video.
+4. Confirm the player loads and plays.  If you see an `EMBEDDING_NOT_ALLOWED` error,
+   the video owner has disabled embedded playback — try a different video.
 
 > **Tip:** The Android emulator's WebView version can be outdated on first
 > boot.  Run `adb shell am start -n com.google.android.webview/.SystemWebViewActivity`

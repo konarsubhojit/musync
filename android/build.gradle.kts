@@ -210,9 +210,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    // YouTube Player
-    implementation(libs.android.youtube.player)
-
     // Media session + notification controls (background playback)
     implementation(libs.androidx.media)
 
