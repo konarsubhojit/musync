@@ -66,7 +66,6 @@ private fun buildPlayerHtml(initialVideoId: String): String =
           playerVars: {
             enablejsapi: 1,
             origin: 'https://www.youtube.com',
-            widget_referrer: 'https://www.youtube.com',
             playsinline: 1,
             autoplay: 1,
             controls: 0,
@@ -192,10 +191,11 @@ fun YouTubePlayerComposable(
                     allowFileAccess = true
                     allowContentAccess = true
 
-                    // Remove WebView token from User-Agent so YouTube iframe player
-                    // does not block playback with error 150/101 on physical Android devices.
-                    val defaultUa = userAgentString ?: ""
-                    userAgentString = defaultUa.replace("; wv", "").replace(" Version/4.0", "")
+                    // The User-Agent is deliberately left untouched. Stripping the "; wv"
+                    // WebView token makes the client claim to be full Chrome, which no
+                    // longer matches how the page actually behaves; YouTube's embed
+                    // checks treat that mismatch as abuse and reject playback with the
+                    // 150-series error on every video, including embeddable ones.
                     AppLogger.i(PLAYER_TAG, "WebView user-agent: $userAgentString")
                 }
                 wv.webChromeClient =
