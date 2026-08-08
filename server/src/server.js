@@ -117,6 +117,11 @@ function createApp(options = {}) {
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('type', 'video');
+      // Only return videos whose owner permits embedded playback. Without this the
+      // app happily queues videos that the IFrame player then rejects with error
+      // 101/150/152, which looks to the user like playback is simply broken.
+      url.searchParams.set('videoEmbeddable', 'true');
+      url.searchParams.set('videoSyndicated', 'true');
       url.searchParams.set('q', q);
       url.searchParams.set('maxResults', '10');
       url.searchParams.set('key', apiKey);

@@ -302,7 +302,13 @@ fun YouTubePlayerComposable(
         val observer =
             object : DefaultLifecycleObserver {
                 override fun onPause(owner: LifecycleOwner) {
-                    webView.evaluateJavascript("pauseVideo();", null)
+                    // The player page may not be loaded yet (e.g. the screen was left
+                    // before a video was selected), in which case `pauseVideo` does not
+                    // exist and a bare call raises a ReferenceError.
+                    webView.evaluateJavascript(
+                        "if (typeof pauseVideo === 'function') pauseVideo();",
+                        null,
+                    )
                     webView.onPause()
                 }
 

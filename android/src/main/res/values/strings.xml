@@ -77,6 +77,8 @@
     <string name="player_connection_offline">Offline. Trying to reconnect…</string>
     <string name="player_connection_unreachable">Can\'t reach the server. Check the server URL in Settings.</string>
     <string name="player_video_load_failed">Couldn\'t load this video.</string>
+    <string name="player_video_embedding_blocked">This video\'s owner doesn\'t allow it to be played inside other apps. Pick a different video.</string>
+    <string name="player_video_not_found">This video is unavailable or has been removed.</string>
     <string name="player_try_again">Try Again</string>
     <string name="player_room_join_failed">Couldn\'t join the room. Please try again.</string>
     <string name="player_queue_sync_failed">Couldn\'t sync queue changes. We\'ll retry when connection returns.</string>

@@ -103,6 +103,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -521,7 +522,10 @@ private fun PlayerVideoArea(
             )
 
             if (uiState.playerLoadError) {
-                PlayerErrorOverlay(onTryAgain = onRetryVideoLoad)
+                PlayerErrorOverlay(
+                    error = uiState.playerError,
+                    onTryAgain = onRetryVideoLoad,
+                )
             }
 
             Box(
@@ -653,7 +657,20 @@ private fun ConnectionStateBanner(connectionState: ConnectionState) {
 }
 
 @Composable
-private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
+private fun PlayerErrorOverlay(
+    error: YTPlayerError?,
+    onTryAgain: () -> Unit,
+) {
+    // Embedding restrictions and removed videos are permanent for that video, so
+    // retrying is pointless and only offered for transient failures.
+    val isPermanent =
+        error == YTPlayerError.EMBEDDING_NOT_ALLOWED || error == YTPlayerError.NOT_FOUND
+    val messageRes =
+        when (error) {
+            YTPlayerError.EMBEDDING_NOT_ALLOWED -> R.string.player_video_embedding_blocked
+            YTPlayerError.NOT_FOUND -> R.string.player_video_not_found
+            else -> R.string.player_video_load_failed
+        }
     Surface(
         color = Color.Black.copy(alpha = PLAYER_ERROR_BACKGROUND_ALPHA),
         modifier = Modifier.fillMaxSize(),
@@ -667,13 +684,16 @@ private fun PlayerErrorOverlay(onTryAgain: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = stringResource(R.string.player_video_load_failed),
+                text = stringResource(messageRes),
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onTryAgain) {
-                Text(stringResource(R.string.player_try_again))
+            if (!isPermanent) {
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onTryAgain) {
+                    Text(stringResource(R.string.player_try_again))
+                }
             }
         }
     }
@@ -936,9 +956,17 @@ private fun PlayerOverlayControls(
                     .padding(horizontal = 12.dp, vertical = 6.dp),
         ) {
             val sliderMax = duration.coerceAtLeast(1f)
+            // While dragging, track the thumb locally and only commit on release.
+            // Seeking on every value change floods the room with SEEK events (one
+            // per touch sample) and fights the incoming position updates.
+            var scrubPosition by remember { mutableStateOf<Float?>(null) }
             Slider(
-                value = currentSecond.coerceIn(0f, sliderMax),
-                onValueChange = onSeek,
+                value = (scrubPosition ?: currentSecond).coerceIn(0f, sliderMax),
+                onValueChange = { scrubPosition = it },
+                onValueChangeFinished = {
+                    scrubPosition?.let { onSeek(it) }
+                    scrubPosition = null
+                },
                 valueRange = 0f..sliderMax,
                 enabled = playerReady,
                 colors =

@@ -437,6 +437,7 @@ class PlayerViewModel
             _uiState.update {
                 it.copy(
                     playerLoadError = true,
+                    playerError = error,
                     isPlaying = false,
                     isBuffering = false,
                 )
@@ -447,6 +448,7 @@ class PlayerViewModel
             _uiState.update {
                 it.copy(
                     playerLoadError = false,
+                    playerError = null,
                     isBuffering = true,
                     playerReloadNonce = it.playerReloadNonce + 1,
                 )

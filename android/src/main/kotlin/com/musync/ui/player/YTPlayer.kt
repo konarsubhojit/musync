@@ -36,7 +36,10 @@ enum class YTPlayerState {
  *   2   = invalid parameter value
  *   5   = HTML5 player error
  *   100 = video not found / removed
- *   101 / 150 = video owner has disabled embedded playback
+ *   101 / 150 / 151 / 152 = the video owner does not allow embedded playback
+ *
+ * 101 and the 150-series are the same underlying condition reported through
+ * different internal paths, so they are all mapped to [EMBEDDING_NOT_ALLOWED].
  */
 enum class YTPlayerError {
     INVALID_PARAMETER,
@@ -52,7 +55,7 @@ enum class YTPlayerError {
                 2 -> INVALID_PARAMETER
                 5 -> HTML5_ERROR
                 100 -> NOT_FOUND
-                101, 150 -> EMBEDDING_NOT_ALLOWED
+                101, 150, 151, 152 -> EMBEDDING_NOT_ALLOWED
                 else -> UNKNOWN
             }
     }

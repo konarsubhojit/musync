@@ -35,6 +35,8 @@ data class PlayerUiState(
     val isBuffering: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.CONNECTING,
     val playerLoadError: Boolean = false,
+    /** The specific failure reported by the IFrame player, when [playerLoadError] is set. */
+    val playerError: YTPlayerError? = null,
     val playerReloadNonce: Int = 0,
     val transientError: PlayerTransientError? = null,
     val inviteLink: String = "",

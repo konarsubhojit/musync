@@ -101,7 +101,7 @@ object AppLogger {
             TAG,
             "Build ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_TYPE}) " +
                 "device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
-                "serverUrl=${BuildConfig.SERVER_URL} verbose=$verboseEnabled",
+                "defaultServerUrl=${BuildConfig.SERVER_URL} verbose=$verboseEnabled",
         )
     }
 
