@@ -51,8 +51,8 @@ class MuSyncApplicationTest {
         assertTrue("Previous handler should have been called", previousHandlerCalled)
 
         // Exception details must appear in the error log.
-        val errorLog = File(logsDir, "errors.log")
-        assertTrue("errors.log should exist after a crash", errorLog.exists())
+        val errorLog = File(logsDir, "musync-errors.log")
+        assertTrue("musync-errors.log should exist after a crash", errorLog.exists())
         val content = errorLog.readText()
         assertTrue("Log should contain the thread name prefix", content.contains("Uncaught exception on thread"))
         assertTrue("Log should contain the exception message", content.contains("test crash"))

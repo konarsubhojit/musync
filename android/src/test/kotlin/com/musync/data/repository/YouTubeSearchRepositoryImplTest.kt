@@ -93,10 +93,13 @@ class YouTubeSearchRepositoryImplTest {
         override val displayName: Flow<String> = flowOf("")
         override val darkTheme: Flow<Boolean> = flowOf(true)
         override val serverUrl: Flow<String> = flowOf("http://localhost:3000")
+        override val verboseLogging: Flow<Boolean> = flowOf(false)
 
         override suspend fun saveDisplayName(name: String) = Unit
 
         override suspend fun saveDarkTheme(enabled: Boolean) = Unit
+
+        override suspend fun saveVerboseLogging(enabled: Boolean) = Unit
 
         override suspend fun saveServerUrl(url: String) = Unit
     }

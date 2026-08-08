@@ -1307,11 +1307,14 @@ class PlayerViewModelTest {
         override val displayName = flowOf(savedName)
         override val darkTheme = flowOf(true)
         override val serverUrl = flowOf("http://localhost:3000")
+        override val verboseLogging = flowOf(false)
 
         override suspend fun saveDisplayName(name: String) = Unit
 
         override suspend fun saveDarkTheme(enabled: Boolean) = Unit
 
         override suspend fun saveServerUrl(url: String) = Unit
+
+        override suspend fun saveVerboseLogging(enabled: Boolean) = Unit
     }
 }

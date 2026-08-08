@@ -122,14 +122,18 @@ class SettingsViewModelTest {
     ) : UserPreferencesRepository {
         private val darkThemeFlow = MutableStateFlow(initialDarkTheme)
         private val serverUrlFlow = MutableStateFlow("http://localhost:3000")
+        private val verboseLoggingFlow = MutableStateFlow(false)
         var savedDarkTheme: Boolean? = null
             private set
         var savedServerUrl: String? = null
+            private set
+        var savedVerboseLogging: Boolean? = null
             private set
 
         override val displayName: Flow<String> = flowOf("")
         override val darkTheme: Flow<Boolean> = darkThemeFlow
         override val serverUrl: Flow<String> = serverUrlFlow
+        override val verboseLogging: Flow<Boolean> = verboseLoggingFlow
 
         override suspend fun saveDisplayName(name: String) = Unit
 
@@ -144,6 +148,11 @@ class SettingsViewModelTest {
         override suspend fun saveServerUrl(url: String) {
             savedServerUrl = url
             serverUrlFlow.value = url
+        }
+
+        override suspend fun saveVerboseLogging(enabled: Boolean) {
+            savedVerboseLogging = enabled
+            verboseLoggingFlow.value = enabled
         }
     }
 }
