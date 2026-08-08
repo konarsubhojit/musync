@@ -44,3 +44,8 @@ lint/tmp/
 # Node.js server
 server/node_modules/
 .android-sdk/
+
+# Environment files (never commit API keys or tokens)
+.env
+.env.*
+!.env.example
