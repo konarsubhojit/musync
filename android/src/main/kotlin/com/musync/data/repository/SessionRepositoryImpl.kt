@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,6 +43,7 @@ class SessionRepositoryImpl
             private const val CHAT_BUFFER_CAPACITY = 64
             private const val TYPING_TIMEOUT_MS = 3_000L
             private const val MAX_CHAT_MESSAGES = 200
+            private const val UNREACHABLE_FAILURE_THRESHOLD = 3
             private const val TAG = "SessionRepository"
         }
 
@@ -54,29 +56,31 @@ class SessionRepositoryImpl
         private val _typingUsers = MutableStateFlow<Set<String>>(emptySet())
 
         private val playNextEmitted = AtomicBoolean(false)
+        private val handshakeFailures = AtomicInteger(0)
         private val typingJobsMutex = Mutex()
         private val typingJobs = mutableMapOf<String, Job>()
 
         init {
             socket.on(Socket.EVENT_CONNECT) {
-                AppLogger.i(TAG, "socket event connect")
+                AppLogger.i(TAG, "socket event connect id=${socket.id()}")
+                handshakeFailures.set(0)
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTED))
             }
-            socket.on(Socket.EVENT_DISCONNECT) {
-                AppLogger.w(TAG, "socket event disconnect")
+            socket.on(Socket.EVENT_DISCONNECT) { args ->
+                AppLogger.w(TAG, "socket event disconnect reason=${args.firstOrNull()}")
                 _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.DISCONNECTED))
             }
-            socket.on(Socket.EVENT_CONNECT_ERROR) {
-                AppLogger.w(TAG, "socket event connect_error")
-                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+            socket.on(Socket.EVENT_CONNECT_ERROR) { args ->
+                AppLogger.w(TAG, "socket event connect_error: ${args.firstOrNull()}")
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(handshakeFailureState()))
             }
             socket.on("reconnect_attempt") {
                 AppLogger.i(TAG, "socket event reconnect_attempt")
-                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(currentRetryState()))
             }
             socket.on("reconnect_error") {
                 AppLogger.w(TAG, "socket event reconnect_error")
-                _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
+                _events.tryEmit(SyncEvent.ConnectionStateChanged(handshakeFailureState()))
             }
             socket.on("reconnect_failed") {
                 AppLogger.w(TAG, "socket event reconnect_failed")
@@ -190,9 +194,33 @@ class SessionRepositoryImpl
             }
         }
 
+        /**
+         * Records a failed handshake and returns the state to report. A couple of
+         * failures may be a slow network, but sustained failures mean the server
+         * URL is wrong or the backend is down, which the user must act on.
+         */
+        private fun handshakeFailureState(): ConnectionState {
+            val failures = handshakeFailures.incrementAndGet()
+            AppLogger.w(TAG, "handshake failure #$failures")
+            return if (failures >= UNREACHABLE_FAILURE_THRESHOLD) {
+                ConnectionState.UNREACHABLE
+            } else {
+                ConnectionState.CONNECTING
+            }
+        }
+
+        /** Reports retries without escalating, so the banner does not flicker. */
+        private fun currentRetryState(): ConnectionState =
+            if (handshakeFailures.get() >= UNREACHABLE_FAILURE_THRESHOLD) {
+                ConnectionState.UNREACHABLE
+            } else {
+                ConnectionState.CONNECTING
+            }
+
         override fun joinSession(session: Session) {
             AppLogger.i(TAG, "emit join_room sessionId=${session.sessionId}")
             playNextEmitted.set(false)
+            handshakeFailures.set(0)
             _session.value = session
             _events.tryEmit(SyncEvent.ConnectionStateChanged(ConnectionState.CONNECTING))
             socket.connect()

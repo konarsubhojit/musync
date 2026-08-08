@@ -1,5 +1,7 @@
 'use strict';
 
+const { logger } = require('./logger');
+
 /**
  * TTL applied to every room key in Redis (4 hours).
  * Prevents memory leaks from stale/abandoned rooms.
@@ -145,7 +147,10 @@ function createRoomStore() {
         try {
           return validateRoomData(raw);
         } catch (err) {
-          console.warn(`[roomStore] Redis key room:${roomId} contains invalid data — ignoring:`, err.message);
+          logger.warn('Redis room key contains invalid data; ignoring', {
+            roomId,
+            reason: err.message,
+          });
           return null;
         }
       },

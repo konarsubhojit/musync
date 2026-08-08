@@ -75,6 +75,7 @@
     <string name="player_room_closed_by_host">Room was closed by the host</string>
     <string name="player_connection_reconnecting">Reconnecting…</string>
     <string name="player_connection_offline">Offline. Trying to reconnect…</string>
+    <string name="player_connection_unreachable">Can\'t reach the server. Check the server URL in Settings.</string>
     <string name="player_video_load_failed">Couldn\'t load this video.</string>
     <string name="player_try_again">Try Again</string>
     <string name="player_room_join_failed">Couldn\'t join the room. Please try again.</string>
@@ -116,4 +117,21 @@
     <string name="settings_export_logs_description">Save the app\'s error logs to a folder on this device. Useful for sharing diagnostics when something goes wrong.</string>
     <string name="settings_export_logs_button">Choose folder &amp; export</string>
     <string name="settings_export_logs_in_progress">Exporting…</string>
+
+    <!-- Developer settings -->
+    <string name="settings_developer_title">Developer</string>
+    <string name="settings_server_url_label">Server URL</string>
+    <string name="settings_server_url_placeholder">http://192.168.1.10:3000</string>
+    <string name="settings_server_url_description">Point the app at a different MuSync backend. Use your computer\'s LAN IP when running the server locally — \"localhost\" and \"10.0.2.2\" only work on an emulator.</string>
+    <string name="settings_server_url_active">Currently connected to: %1$s</string>
+    <string name="settings_server_url_save">Save server URL</string>
+    <string name="settings_server_url_saved">Saved. Restart the app to connect to the new server.</string>
+    <string name="settings_server_url_save_failed">Couldn\'t save the server URL.</string>
+    <string name="settings_server_url_invalid">Enter a full URL starting with http:// or https://</string>
+    <string name="settings_server_url_restart_hint">Changes take effect after you fully close and reopen the app.</string>
+    <string name="settings_verbose_logging_label">Verbose logging</string>
+    <string name="settings_verbose_logging_description">Records detailed socket, sync and playback tracing. Useful when reporting a bug; leave it off for everyday use as it writes a lot of data.</string>
+    <string name="settings_verbose_logging_save_failed">Couldn\'t save the logging preference.</string>
+    <string name="settings_log_location">Log files: %1$s</string>
+    <string name="settings_log_location_hint">Open this folder with any file manager to grab the logs.</string>
 </resources>

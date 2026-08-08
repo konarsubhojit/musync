@@ -1,8 +1,8 @@
 package com.musync.data.repository
 
-import com.musync.BuildConfig
 import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.model.YouTubeVideoInfo
+import com.musync.data.remote.ServerConfig
 import com.musync.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +19,7 @@ class YouTubeSearchRepositoryImpl
     @Inject
     constructor(
         private val okHttpClient: OkHttpClient,
+        private val serverConfig: ServerConfig,
     ) : YouTubeSearchRepository {
         private val videoInfoCache = LinkedHashMap<String, YouTubeVideoInfo>(MAX_VIDEO_INFO_CACHE_SIZE, 0.75f, true)
         private val tag = "YouTubeSearchRepo"
@@ -27,7 +28,7 @@ class YouTubeSearchRepositoryImpl
             withContext(Dispatchers.IO) {
                 try {
                     val encodedQuery = URLEncoder.encode(query, "UTF-8")
-                    val url = "${BuildConfig.SERVER_URL}/api/youtube/search?q=$encodedQuery"
+                    val url = "${serverConfig.baseUrl}/api/youtube/search?q=$encodedQuery"
                     AppLogger.i(tag, "search request query=\"$query\"")
                     val request = Request.Builder().url(url).get().build()
                     okHttpClient.newCall(request).execute().use { response ->
@@ -73,7 +74,7 @@ class YouTubeSearchRepositoryImpl
                     return@withContext Result.success(cached)
                 }
                 try {
-                    val url = "${BuildConfig.SERVER_URL}/api/youtube/video-info/$videoId"
+                    val url = "${serverConfig.baseUrl}/api/youtube/video-info/$videoId"
                     AppLogger.i(tag, "video-info request videoId=$videoId")
                     val request = Request.Builder().url(url).get().build()
                     okHttpClient.newCall(request).execute().use { response ->

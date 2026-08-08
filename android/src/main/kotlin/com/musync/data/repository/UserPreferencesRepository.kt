@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.musync.BuildConfig
 import com.musync.logging.AppLogger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -25,11 +26,26 @@ interface UserPreferencesRepository {
     /** Flow of whether the app should use dark theme. */
     val darkTheme: Flow<Boolean>
 
+    /**
+     * Flow of the backend base URL. Falls back to the compile-time
+     * `BuildConfig.SERVER_URL` when the user has not overridden it.
+     */
+    val serverUrl: Flow<String>
+
+    /** Flow of whether high-volume verbose tracing is written to the log files. */
+    val verboseLogging: Flow<Boolean>
+
     /** Saves [name] as the user's display name. */
     suspend fun saveDisplayName(name: String)
 
     /** Saves whether dark theme is enabled. */
     suspend fun saveDarkTheme(enabled: Boolean)
+
+    /** Saves [url] as the backend base URL. Takes effect after an app restart. */
+    suspend fun saveServerUrl(url: String)
+
+    /** Saves whether verbose tracing should be recorded. */
+    suspend fun saveVerboseLogging(enabled: Boolean)
 }
 
 @Singleton
@@ -42,6 +58,8 @@ class UserPreferencesRepositoryImpl
             private const val TAG = "UserPreferencesRepository"
             private val KEY_DISPLAY_NAME = stringPreferencesKey("display_name")
             private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme")
+            private val KEY_SERVER_URL = stringPreferencesKey("server_url")
+            private val KEY_VERBOSE_LOGGING = booleanPreferencesKey("verbose_logging")
         }
 
         /**
@@ -66,11 +84,27 @@ class UserPreferencesRepositoryImpl
         override val darkTheme: Flow<Boolean> =
             safeData.map { prefs -> prefs[KEY_DARK_THEME] ?: true }
 
+        override val serverUrl: Flow<String> =
+            safeData.map { prefs ->
+                prefs[KEY_SERVER_URL]?.takeIf { it.isNotBlank() } ?: BuildConfig.SERVER_URL
+            }
+
+        override val verboseLogging: Flow<Boolean> =
+            safeData.map { prefs -> prefs[KEY_VERBOSE_LOGGING] ?: BuildConfig.DEBUG }
+
         override suspend fun saveDisplayName(name: String) {
             dataStore.edit { prefs -> prefs[KEY_DISPLAY_NAME] = name }
         }
 
         override suspend fun saveDarkTheme(enabled: Boolean) {
             dataStore.edit { prefs -> prefs[KEY_DARK_THEME] = enabled }
+        }
+
+        override suspend fun saveServerUrl(url: String) {
+            dataStore.edit { prefs -> prefs[KEY_SERVER_URL] = url }
+        }
+
+        override suspend fun saveVerboseLogging(enabled: Boolean) {
+            dataStore.edit { prefs -> prefs[KEY_VERBOSE_LOGGING] = enabled }
         }
     }

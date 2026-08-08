@@ -1306,9 +1306,12 @@ class PlayerViewModelTest {
     ) : UserPreferencesRepository {
         override val displayName = flowOf(savedName)
         override val darkTheme = flowOf(true)
+        override val serverUrl = flowOf("http://localhost:3000")
 
         override suspend fun saveDisplayName(name: String) = Unit
 
         override suspend fun saveDarkTheme(enabled: Boolean) = Unit
+
+        override suspend fun saveServerUrl(url: String) = Unit
     }
 }

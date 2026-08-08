@@ -83,7 +83,7 @@ class SyncEmitter
             roomId: String,
             positionMs: Long,
         ) {
-            AppLogger.i(tag, "emit SYNC_HEARTBEAT roomId=$roomId positionMs=$positionMs")
+            AppLogger.v(tag) { "emit SYNC_HEARTBEAT roomId=$roomId positionMs=$positionMs" }
             socket.emit(
                 SocketEvents.SYNC_HEARTBEAT,
                 JSONObject()

@@ -1,5 +1,8 @@
 package com.musync.data.repository
 
+import com.musync.data.remote.ServerConfig
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -83,6 +86,18 @@ class YouTubeSearchRepositoryImplTest {
                             .build()
                     },
                 ).build()
-        return YouTubeSearchRepositoryImpl(client)
+        return YouTubeSearchRepositoryImpl(client, ServerConfig(FakePreferences))
+    }
+
+    private object FakePreferences : UserPreferencesRepository {
+        override val displayName: Flow<String> = flowOf("")
+        override val darkTheme: Flow<Boolean> = flowOf(true)
+        override val serverUrl: Flow<String> = flowOf("http://localhost:3000")
+
+        override suspend fun saveDisplayName(name: String) = Unit
+
+        override suspend fun saveDarkTheme(enabled: Boolean) = Unit
+
+        override suspend fun saveServerUrl(url: String) = Unit
     }
 }

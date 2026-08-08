@@ -15,6 +15,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        Diagnostic logs are written to the shared Download/MuSync folder so users can
+        retrieve them with a file manager. On API 29+ this goes through MediaStore and
+        needs no permission; on API 26-28 the folder is a plain path that does, hence
+        the maxSdkVersion cap.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:name=".MuSyncApplication"
         android:allowBackup="true"

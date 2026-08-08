@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FileDownload
@@ -22,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -40,6 +45,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.musync.R
@@ -107,6 +114,7 @@ fun SettingsScreen(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .verticalScroll(rememberScrollState())
                     .padding(PaddingValues(horizontal = 16.dp, vertical = 12.dp)),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -121,6 +129,129 @@ fun SettingsScreen(
                     pickFolderLauncher.launch(null)
                 },
             )
+            DeveloperCard(
+                serverUrl = uiState.serverUrlInput,
+                activeServerUrl = uiState.activeServerUrl,
+                isError = uiState.serverUrlError,
+                isVerboseLogging = uiState.isVerboseLogging,
+                logDirectory = uiState.logDirectory,
+                onServerUrlChanged = viewModel::onServerUrlChanged,
+                onSaveClick = viewModel::onServerUrlSaved,
+                onVerboseLoggingChanged = viewModel::onVerboseLoggingToggled,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeveloperCard(
+    serverUrl: String,
+    activeServerUrl: String,
+    isError: Boolean,
+    isVerboseLogging: Boolean,
+    logDirectory: String,
+    onServerUrlChanged: (String) -> Unit,
+    onSaveClick: () -> Unit,
+    onVerboseLoggingChanged: (Boolean) -> Unit,
+) {
+    val verboseLabel = stringResource(R.string.settings_verbose_logging_label)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = stringResource(R.string.settings_developer_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_server_url_description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = serverUrl,
+                onValueChange = onServerUrlChanged,
+                label = { Text(stringResource(R.string.settings_server_url_label)) },
+                placeholder = { Text(stringResource(R.string.settings_server_url_placeholder)) },
+                supportingText = {
+                    Text(
+                        text =
+                            if (isError) {
+                                stringResource(R.string.settings_server_url_invalid)
+                            } else {
+                                stringResource(R.string.settings_server_url_active, activeServerUrl)
+                            },
+                    )
+                },
+                isError = isError,
+                singleLine = true,
+                keyboardOptions =
+                    KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Done,
+                    ),
+                keyboardActions = KeyboardActions(onDone = { onSaveClick() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onSaveClick,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_server_url_save),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.settings_server_url_restart_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = verboseLabel,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Switch(
+                    checked = isVerboseLogging,
+                    onCheckedChange = onVerboseLoggingChanged,
+                    modifier = Modifier.semantics { contentDescription = verboseLabel },
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_verbose_logging_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (logDirectory.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.settings_log_location, logDirectory),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = stringResource(R.string.settings_log_location_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

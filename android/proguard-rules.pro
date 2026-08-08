@@ -1,5 +1,12 @@
 # ProGuard rules for MuSync
 
+# ==================== WebView JavaScript bridge ====================
+# Required: the YouTube IFrame player calls these methods by name from JavaScript,
+# so their names must survive obfuscation or the player never reports "ready".
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
 # ==================== AndroidYouTubePlayer ====================
 # Required: library uses reflection to invoke JS callbacks and load the player bridge
 -keep class com.pierfrancescosoffritti.androidyoutubeplayer.** { *; }

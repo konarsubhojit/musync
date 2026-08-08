@@ -636,6 +636,7 @@ private fun ConnectionStateBanner(connectionState: ConnectionState) {
         when (connectionState) {
             ConnectionState.CONNECTED -> null
             ConnectionState.CONNECTING -> R.string.player_connection_reconnecting
+            ConnectionState.UNREACHABLE -> R.string.player_connection_unreachable
             ConnectionState.DISCONNECTED -> R.string.player_connection_offline
         } ?: return
     Surface(

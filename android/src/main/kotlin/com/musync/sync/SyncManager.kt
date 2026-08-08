@@ -54,7 +54,7 @@ class SyncManager
             AppLogger.i(tag, "startListening")
             socket.on(SocketEvents.SYNC_HEARTBEAT) { args ->
                 val json = args.firstOrNull() as? JSONObject ?: return@on
-                AppLogger.i(tag, "recv SYNC_HEARTBEAT hostPositionMs=${json.optLong("hostPositionMs")}")
+                AppLogger.v(tag) { "recv SYNC_HEARTBEAT hostPositionMs=${json.optLong("hostPositionMs")}" }
                 val heartbeat =
                     SyncHeartbeat(
                         hostPositionMs = json.optLong("hostPositionMs"),
@@ -85,7 +85,13 @@ class SyncManager
             val estimatedHostPosition = heartbeat.hostPositionMs + (now - heartbeat.hostTimestamp)
             val drift = localPosition() - estimatedHostPosition
 
+            AppLogger.v(tag) {
+                "drift=${drift}ms local=${localPosition()} estimatedHost=$estimatedHostPosition " +
+                    "transit=${now - heartbeat.hostTimestamp}ms"
+            }
+
             if (abs(drift) > SEEK_THRESHOLD_MS) {
+                AppLogger.i(tag, "drift ${drift}ms exceeds threshold; seeking to $estimatedHostPosition")
                 seekTo(estimatedHostPosition)
             }
         }

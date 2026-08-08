@@ -36,12 +36,13 @@ class AppLoggerTest {
     fun `info entries are written to the app log only`() {
         AppLogger.i("TestTag", "hello")
 
-        val appLog = File(logsDir, "app.log")
-        val errorLog = File(logsDir, "errors.log")
+        val appLog = File(logsDir, "musync.log")
+        val errorLog = File(logsDir, "musync-errors.log")
         assertTrue(appLog.exists())
         assertFalse(errorLog.exists())
         val content = appLog.readText()
-        assertTrue(content.contains("I/TestTag: hello"))
+        assertTrue(content.contains("I/TestTag"))
+        assertTrue(content.contains(": hello"))
     }
 
     @Test
@@ -49,11 +50,13 @@ class AppLoggerTest {
         AppLogger.w("WTag", "watch out")
         AppLogger.e("ETag", "boom", IllegalStateException("kaboom"))
 
-        val errorLog = File(logsDir, "errors.log")
+        val errorLog = File(logsDir, "musync-errors.log")
         assertTrue(errorLog.exists())
         val content = errorLog.readText()
-        assertTrue(content.contains("W/WTag: watch out"))
-        assertTrue(content.contains("E/ETag: boom"))
+        assertTrue(content.contains("W/WTag"))
+        assertTrue(content.contains(": watch out"))
+        assertTrue(content.contains("E/ETag"))
+        assertTrue(content.contains(": boom"))
         assertTrue(content.contains("IllegalStateException"))
         assertTrue(content.contains("kaboom"))
     }
@@ -65,7 +68,22 @@ class AppLoggerTest {
         assertNotNull(appLog)
         assertNotNull(errorLog)
         assertEquals(logsDir.absolutePath, appLog!!.parentFile!!.absolutePath)
-        assertEquals("app.log", appLog.name)
-        assertEquals("errors.log", errorLog!!.name)
+        assertEquals("musync.log", appLog.name)
+        assertEquals("musync-errors.log", errorLog!!.name)
+    }
+
+    @Test
+    fun `verbose entries are only recorded when verbose logging is enabled`() {
+        AppLogger.setVerboseEnabled(false)
+        AppLogger.v("VTag") { "suppressed" }
+
+        val appLog = File(logsDir, "musync.log")
+        assertFalse(appLog.exists() && appLog.readText().contains("suppressed"))
+
+        AppLogger.setVerboseEnabled(true)
+        AppLogger.v("VTag") { "recorded" }
+
+        assertTrue(appLog.readText().contains("recorded"))
+        AppLogger.setVerboseEnabled(false)
     }
 }

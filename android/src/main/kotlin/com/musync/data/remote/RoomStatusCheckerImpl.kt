@@ -1,6 +1,5 @@
 package com.musync.data.remote
 
-import com.musync.BuildConfig
 import com.musync.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,11 +20,12 @@ class RoomStatusCheckerImpl
     @Inject
     constructor(
         private val okHttpClient: OkHttpClient,
+        private val serverConfig: ServerConfig,
     ) : RoomStatusChecker {
         override suspend fun getStatus(roomId: String): RoomStatus? =
             withContext(Dispatchers.IO) {
                 try {
-                    val url = "${BuildConfig.SERVER_URL}/room/$roomId/status"
+                    val url = "${serverConfig.baseUrl}/room/$roomId/status"
                     val request = Request.Builder().url(url).get().build()
                     okHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) return@withContext null

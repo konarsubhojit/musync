@@ -2,7 +2,9 @@ package com.musync.ui.player
 
 import android.annotation.SuppressLint
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -19,6 +21,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.musync.logging.AppLogger
+
+/** Shared log tag for the WebView-hosted YouTube player. */
+private const val PLAYER_TAG = "YTPlayer"
+
+/** A literal YouTube video ID; anything else is unsafe to inject into the page. */
+private val VIDEO_ID_PATTERN = Regex("^[A-Za-z0-9_-]{11}$")
 
 /**
  * HTML page that bootstraps the YouTube IFrame Player API inside a [WebView].
@@ -111,19 +120,36 @@ private class YTAndroidBridge(
     private val onDuration: (Float) -> Unit,
 ) {
     @JavascriptInterface
-    fun onReady() = onReady.invoke()
+    fun onReady() {
+        AppLogger.i(PLAYER_TAG, "iframe player ready")
+        onReady.invoke()
+    }
 
     @JavascriptInterface
-    fun onStateChange(state: Int) = onStateChange(YTPlayerState.fromInt(state))
+    fun onStateChange(state: Int) {
+        val mapped = YTPlayerState.fromInt(state)
+        AppLogger.i(PLAYER_TAG, "state change raw=$state mapped=$mapped")
+        onStateChange(mapped)
+    }
 
     @JavascriptInterface
-    fun onError(code: Int) = onError(YTPlayerError.fromInt(code))
+    fun onError(code: Int) {
+        val mapped = YTPlayerError.fromInt(code)
+        AppLogger.e(PLAYER_TAG, "iframe player error code=$code mapped=$mapped")
+        onError(mapped)
+    }
 
     @JavascriptInterface
-    fun onCurrentTime(seconds: Double) = onCurrentTime(seconds.toFloat())
+    fun onCurrentTime(seconds: Double) {
+        AppLogger.v(PLAYER_TAG) { "currentTime=$seconds" }
+        onCurrentTime(seconds.toFloat())
+    }
 
     @JavascriptInterface
-    fun onDuration(seconds: Double) = onDuration(seconds.toFloat())
+    fun onDuration(seconds: Double) {
+        AppLogger.v(PLAYER_TAG) { "duration=$seconds" }
+        onDuration(seconds.toFloat())
+    }
 }
 
 /**
@@ -170,14 +196,56 @@ fun YouTubePlayerComposable(
                     // does not block playback with error 150/101 on physical Android devices.
                     val defaultUa = userAgentString ?: ""
                     userAgentString = defaultUa.replace("; wv", "").replace(" Version/4.0", "")
+                    AppLogger.i(PLAYER_TAG, "WebView user-agent: $userAgentString")
                 }
-                wv.webChromeClient = android.webkit.WebChromeClient()
+                wv.webChromeClient =
+                    object : android.webkit.WebChromeClient() {
+                        override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                            // The iframe API reports embed/playback problems here; these
+                            // messages are usually the only clue when the player stays blank.
+                            AppLogger.i(
+                                PLAYER_TAG,
+                                "console [${message.messageLevel()}] ${message.message()} " +
+                                    "(${message.sourceId()}:${message.lineNumber()})",
+                            )
+                            return true
+                        }
+                    }
                 wv.webViewClient =
                     object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView,
                             request: WebResourceRequest,
                         ): Boolean = false
+
+                        override fun onPageFinished(
+                            view: WebView,
+                            url: String,
+                        ) {
+                            AppLogger.i(PLAYER_TAG, "page finished: $url")
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError,
+                        ) {
+                            AppLogger.e(
+                                PLAYER_TAG,
+                                "resource error ${error.errorCode} for ${request.url}: ${error.description}",
+                            )
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            errorResponse: WebResourceResponse,
+                        ) {
+                            AppLogger.w(
+                                PLAYER_TAG,
+                                "http ${errorResponse.statusCode} for ${request.url}",
+                            )
+                        }
                     }
 
                 val bridge =
@@ -203,6 +271,10 @@ fun YouTubePlayerComposable(
                                         videoId: String,
                                         startSeconds: Float,
                                     ) {
+                                        // The ID is interpolated into JavaScript running on a
+                                        // youtube.com-origin page that has a live JS bridge, so
+                                        // reject anything that is not a literal YouTube ID.
+                                        if (!VIDEO_ID_PATTERN.matches(videoId)) return
                                         wv.post {
                                             wv.evaluateJavascript(
                                                 "loadVideo('$videoId', $startSeconds);",
@@ -247,13 +319,14 @@ fun YouTubePlayerComposable(
 
     // Initialize or update the YouTube player page when videoId or reloadNonce changes.
     LaunchedEffect(videoId, reloadNonce, controllerRef) {
-        if (videoId.isEmpty()) return@LaunchedEffect
+        if (!VIDEO_ID_PATTERN.matches(videoId)) return@LaunchedEffect
 
         val controller = controllerRef
         val requestKey = "$videoId#$reloadNonce"
 
         if (initialLoadedVideoId.isEmpty() || (reloadNonce > 0 && requestKey != loadedRequestKey && controller == null)) {
             // First load or explicit reload nonce when controller is reset: load full HTML template.
+            AppLogger.i(PLAYER_TAG, "loading player page for videoId=$videoId nonce=$reloadNonce")
             initialLoadedVideoId = videoId
             loadedRequestKey = requestKey
             webView.loadDataWithBaseURL(
@@ -265,6 +338,7 @@ fun YouTubePlayerComposable(
             )
         } else if (controller != null && requestKey != loadedRequestKey) {
             // Player already initialized: load new video dynamically via JavaScript bridge.
+            AppLogger.i(PLAYER_TAG, "switching to videoId=$videoId via bridge")
             controller.loadVideo(videoId, 0f)
             loadedRequestKey = requestKey
         }

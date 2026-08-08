@@ -1,16 +1,42 @@
 package com.musync
 
 import android.app.Application
+import com.musync.data.repository.UserPreferencesRepository
 import com.musync.logging.AppLogger
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @HiltAndroidApp
 class MuSyncApplication : Application() {
+    @Inject
+    lateinit var userPreferencesRepository: UserPreferencesRepository
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override fun onCreate() {
         super.onCreate()
         AppLogger.init(this)
         AppLogger.i(TAG, "MuSync application starting")
+        applyVerboseLoggingPreference()
         installCrashHandler()
+    }
+
+    /**
+     * Applies the persisted verbose-logging preference. Collected for the process
+     * lifetime so a change made in Settings takes effect immediately, including for
+     * components that are not themselves preference-aware.
+     */
+    private fun applyVerboseLoggingPreference() {
+        applicationScope.launch {
+            userPreferencesRepository.verboseLogging
+                .catch { error -> AppLogger.w(TAG, "Failed to read verbose logging preference", error) }
+                .collect { enabled -> AppLogger.setVerboseEnabled(enabled) }
+        }
     }
 
     /**

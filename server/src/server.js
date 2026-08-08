@@ -11,6 +11,7 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createRoomStore, isVideoRef } = require('./roomStore');
+const { logger } = require('./logger');
 
 /**
  * @typedef {object} AppBundle
@@ -38,6 +39,23 @@ function createApp(options = {}) {
 
   const app = express();
   const videoInfoCache = new Map();
+
+  // Request tracing: one line per completed request with method, path, status and
+  // duration. Logged at debug so it can be silenced in production via LOG_LEVEL.
+  app.use((req, res, next) => {
+    const startedAt = process.hrtime.bigint();
+    res.on('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      logger.debug('http request', {
+        method: req.method,
+        path: req.originalUrl,
+        status: res.statusCode,
+        durationMs: Number(durationMs.toFixed(1)),
+        ip: req.ip,
+      });
+    });
+    next();
+  });
 
   function isValidYouTubeVideoId(videoId) {
     return /^[A-Za-z0-9_-]{11}$/.test(videoId);
@@ -95,7 +113,7 @@ function createApp(options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      console.log(`[youtube-search] request q="${q}" timeoutMs=${timeoutMs}`);
+      logger.info('youtube search request', { q, timeoutMs });
       const url = new URL('https://www.googleapis.com/youtube/v3/search');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('type', 'video');
@@ -104,7 +122,7 @@ function createApp(options = {}) {
       url.searchParams.set('key', apiKey);
       const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
-        console.warn(`[youtube-search] upstream error status=${response.status} q="${q}"`);
+        logger.warn('youtube search upstream error', { status: response.status, q });
         res.status(502).json({ error: 'YouTube API error' });
         return;
       }
@@ -123,7 +141,7 @@ function createApp(options = {}) {
       if (err.name === 'AbortError') {
         res.status(504).json({ error: 'YouTube API request timed out' });
       } else {
-        console.error('[youtube-search] error:', err);
+        logger.error('youtube search failed', { q, err });
         res.status(500).json({ error: 'Internal server error' });
       }
     } finally {
@@ -167,14 +185,14 @@ function createApp(options = {}) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      console.log(`[youtube-video-info] request videoId=${videoId} timeoutMs=${timeoutMs}`);
+      logger.info('youtube video-info request', { videoId, timeoutMs });
       const url = new URL('https://www.googleapis.com/youtube/v3/videos');
       url.searchParams.set('part', 'snippet');
       url.searchParams.set('id', videoId);
       url.searchParams.set('key', apiKey);
       const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
-        console.warn(`[youtube-video-info] upstream error status=${response.status} videoId=${videoId}`);
+        logger.warn('youtube video-info upstream error', { status: response.status, videoId });
         res.status(502).json({ error: 'YouTube API error' });
         return;
       }
@@ -196,7 +214,7 @@ function createApp(options = {}) {
       if (err.name === 'AbortError') {
         res.status(504).json({ error: 'YouTube API request timed out' });
       } else {
-        console.error('[youtube-video-info] error:', err);
+        logger.error('youtube video-info failed', { videoId, err });
         res.status(500).json({ error: 'Internal server error' });
       }
     } finally {
@@ -296,6 +314,18 @@ function createApp(options = {}) {
     },
   });
 
+  // Handshake failures never reach the `connection` handler, so log them here.
+  // This is what surfaces a client that cannot connect at all.
+  io.engine.on('connection_error', (err) => {
+    logger.warn('socket handshake failed', {
+      code: err.code,
+      message: err.message,
+      url: err.req?.url,
+      origin: err.req?.headers?.origin,
+      userAgent: err.req?.headers?.['user-agent'],
+    });
+  });
+
   // ── Room status endpoint ──────────────────────────────────────────────────
   // Returns whether a room is currently active (has connected listeners) and
   // how many listeners are present.  Used by the Android client to show
@@ -311,7 +341,7 @@ function createApp(options = {}) {
       const listenerCount = sockets.length;
       res.json({ active: listenerCount > 0, listenerCount });
     } catch (err) {
-      console.error(`[status] fetchSockets failed  room=${roomId}:`, err);
+      logger.error('status fetchSockets failed', { roomId, err });
       res.status(500).json({ error: 'internal server error' });
     }
   });
@@ -385,7 +415,7 @@ function createApp(options = {}) {
       await roomStore.setRoom(roomId, roomData);
       return roomData;
     } catch (err) {
-      console.error(`[roomStore] updateRoomState failed  room=${roomId}:`, err);
+      logger.error('updateRoomState failed', { roomId, err });
       throw err;
     }
   }
@@ -432,7 +462,7 @@ function createApp(options = {}) {
         await roomStore.deleteRoom(roomId);
       }
     } catch (err) {
-      console.error(`[roomStore] cleanupRoomState failed for room=${roomId}:`, err);
+      logger.error('cleanupRoomState failed', { roomId, err });
     }
   }
 
@@ -461,7 +491,7 @@ function createApp(options = {}) {
         }));
       io.to(roomId).emit('PARTICIPANTS_UPDATED', { participants });
     } catch (err) {
-      console.error(`[socket] broadcastParticipants failed room=${roomId}:`, err);
+      logger.error('broadcastParticipants failed', { roomId, err });
     }
   }
 
@@ -476,28 +506,36 @@ function createApp(options = {}) {
   }
 
   /**
-   * Formats the first Socket.IO event argument into a compact log suffix.
-   * Includes payload key names and roomId (when present) without dumping
-   * full payload contents.
+   * Summarises the first Socket.IO event argument for logging: key names and the
+   * roomId when present, without dumping payload contents (which may include chat
+   * text or long queues).
    * @param {unknown} firstArg
-   * @returns {string}
+   * @returns {Record<string, unknown>}
    */
   function describeSocketPayload(firstArg) {
-    if (!firstArg || typeof firstArg !== 'object') return '';
-    if (Array.isArray(firstArg)) return ` payload=array(len=${firstArg.length})`;
-    const roomId = typeof firstArg.roomId === 'string' ? firstArg.roomId : '';
-    const keys = Object.keys(firstArg);
-    return ` payloadKeys=${keys.join(',')}${roomId ? ` room=${roomId}` : ''}`;
+    if (!firstArg || typeof firstArg !== 'object') return {};
+    if (Array.isArray(firstArg)) return { payload: `array(len=${firstArg.length})` };
+    const fields = { payloadKeys: Object.keys(firstArg).join(',') };
+    if (typeof firstArg.roomId === 'string') fields.roomId = firstArg.roomId;
+    return fields;
   }
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
-    console.log(`[socket] connected  id=${socket.id}`);
+    logger.info('socket connected', {
+      id: socket.id,
+      transport: socket.conn?.transport?.name,
+      address: socket.handshake?.address,
+      userAgent: socket.handshake?.headers?.['user-agent'],
+    });
+    socket.conn?.on('upgrade', (transport) => {
+      logger.debug('socket transport upgraded', { id: socket.id, transport: transport.name });
+    });
     socket.onAny((eventName, ...args) => {
-      console.log(`[socket] recv event=${eventName} id=${socket.id}${describeSocketPayload(args[0])}`);
+      logger.trace('socket recv', { event: eventName, id: socket.id, ...describeSocketPayload(args[0]) });
     });
     socket.onAnyOutgoing((eventName, ...args) => {
-      console.log(`[socket] send event=${eventName} id=${socket.id}${describeSocketPayload(args[0])}`);
+      logger.trace('socket send', { event: eventName, id: socket.id, ...describeSocketPayload(args[0]) });
     });
 
     // ── join_room ──────────────────────────────────────────────────────────
@@ -516,7 +554,7 @@ function createApp(options = {}) {
       }
       socket.join(roomId);
       participantNames.set(socket.id, { roomId, displayName });
-      console.log(`[socket] joined     id=${socket.id}  room=${roomId}  name=${displayName}`);
+      logger.info('socket joined room', { id: socket.id, roomId, displayName });
       socket.to(roomId).emit('peer_joined', { socketId: socket.id, displayName });
       // Broadcast the updated participant list to everyone in the room.
       broadcastParticipants(roomId);
@@ -530,7 +568,7 @@ function createApp(options = {}) {
           // to determine its role (e.g. after a host transfer).
           ack({ ok: true, state: roomData ?? null, memberCount: sockets.length, socketId: socket.id });
         } catch (err) {
-          console.error(`[socket] join_room failed  id=${socket.id}  room=${roomId}:`, err);
+          logger.error('join_room failed', { id: socket.id, roomId, err });
           ack({ error: 'failed to load room state' });
         }
       }
@@ -544,7 +582,7 @@ function createApp(options = {}) {
       }
       participantNames.delete(socket.id);
       socket.leave(roomId);
-      console.log(`[socket] left       id=${socket.id}  room=${roomId}`);
+      logger.info('socket left room', { id: socket.id, roomId });
       socket.to(roomId).emit('peer_left', { socketId: socket.id });
       // Broadcast the updated participant list to remaining room members.
       broadcastParticipants(roomId);
@@ -565,14 +603,14 @@ function createApp(options = {}) {
         if (typeof ack === 'function') ack({ error: 'not in room' });
         return;
       }
-      console.log(`[socket] end_session id=${socket.id}  room=${roomId}`);
+      logger.info('end_session', { id: socket.id, roomId });
       // Notify all members (including the host) that the room is closed.
       io.to(roomId).emit('ROOM_CLOSED');
       // Remove persisted state so late joiners don't see stale data.
       try {
         await roomStore.deleteRoom(roomId);
       } catch (err) {
-        console.error(`[socket] end_session deleteRoom failed  room=${roomId}:`, err);
+        logger.error('end_session deleteRoom failed', { roomId, err });
       }
       if (typeof ack === 'function') ack({ ok: true });
     });
@@ -631,7 +669,7 @@ function createApp(options = {}) {
         // Broadcast the normalized queue so peers see the same data as the store.
         socket.to(roomId).emit('QUEUE_UPDATED', normalized);
       } catch (err) {
-        console.error(`[socket] QUEUE_UPDATED failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('QUEUE_UPDATED failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -652,7 +690,7 @@ function createApp(options = {}) {
         const roomData = await updateRoomState(socket.id, roomId, true, pos, existing);
         socket.to(roomId).emit('PLAY', { positionMs: roomData.positionMs });
       } catch (err) {
-        console.error(`[socket] PLAY failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('PLAY failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -672,7 +710,7 @@ function createApp(options = {}) {
         const roomData = await updateRoomState(socket.id, roomId, false, pos, existing);
         socket.to(roomId).emit('PAUSE', { positionMs: roomData.positionMs });
       } catch (err) {
-        console.error(`[socket] PAUSE failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('PAUSE failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -695,7 +733,7 @@ function createApp(options = {}) {
         const roomData = await updateRoomState(socket.id, roomId, isPlaying, pos, existing);
         socket.to(roomId).emit('SEEK', { positionMs: roomData.positionMs });
       } catch (err) {
-        console.error(`[socket] SEEK failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('SEEK failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -720,9 +758,9 @@ function createApp(options = {}) {
         if (!sockets.some((s) => s.id === newHostSocketId)) return;
         await roomStore.setRoom(roomId, { ...existing, hostId: newHostSocketId, updatedAt: Date.now() });
         io.to(roomId).emit('HOST_TRANSFERRED', { newHostSocketId });
-        console.log(`[socket] TRANSFER_HOST  from=${socket.id}  to=${newHostSocketId}  room=${roomId}`);
+        logger.info('TRANSFER_HOST', { from: socket.id, to: newHostSocketId, roomId });
       } catch (err) {
-        console.error(`[socket] TRANSFER_HOST failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('TRANSFER_HOST failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -782,7 +820,7 @@ function createApp(options = {}) {
         await roomStore.setRoom(roomId, { ...existing, democraticMode: enabled, updatedAt: Date.now() });
         io.to(roomId).emit('DEMOCRATIC_MODE_CHANGED', { enabled });
       } catch (err) {
-        console.error(`[socket] SET_DEMOCRATIC_MODE failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('SET_DEMOCRATIC_MODE failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -801,7 +839,7 @@ function createApp(options = {}) {
         await roomStore.setRoom(roomId, { ...existing, autoApproveQueue: enabled, updatedAt: Date.now() });
         io.to(roomId).emit('AUTO_APPROVE_QUEUE_CHANGED', { enabled });
       } catch (err) {
-        console.error(`[socket] SET_AUTO_APPROVE_QUEUE failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('SET_AUTO_APPROVE_QUEUE failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -853,7 +891,7 @@ function createApp(options = {}) {
           }
         }
       } catch (err) {
-        console.error(`[socket] REQUEST_QUEUE_ADD failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('REQUEST_QUEUE_ADD failed', { id: socket.id, roomId, err });
       }
     });
 
@@ -880,7 +918,7 @@ function createApp(options = {}) {
         });
         io.to(roomId).emit('QUEUE_UPDATED', updatedQueue);
       } catch (err) {
-        console.error(`[socket] APPROVE_QUEUE_ADD failed  id=${socket.id}  room=${roomId}:`, err);
+        logger.error('APPROVE_QUEUE_ADD failed', { id: socket.id, roomId, err });
       }
     });
     // Fires while the socket is still a member of its rooms, so we can
@@ -902,7 +940,7 @@ function createApp(options = {}) {
 
     // ── disconnect ─────────────────────────────────────────────────────────
     socket.on('disconnect', (reason) => {
-      console.log(`[socket] disconnected id=${socket.id}  reason=${reason}`);
+      logger.info('socket disconnected', { id: socket.id, reason });
     });
   });
 
