@@ -9,6 +9,7 @@ import com.musync.data.model.Session
 import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
+import com.musync.data.remote.ServerConfig
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
@@ -47,6 +48,7 @@ class PlayerViewModel
         private val userPreferencesRepository: UserPreferencesRepository,
         private val mediaPlaybackController: MediaPlaybackController,
         private val queueManager: QueueManager,
+        private val serverConfig: ServerConfig,
     ) : ViewModel() {
         companion object {
             /**
@@ -105,7 +107,7 @@ class PlayerViewModel
             private const val TAG = "PlayerViewModel"
         }
 
-        private val _uiState = MutableStateFlow(PlayerUiState())
+        private val _uiState = MutableStateFlow(PlayerUiState(playerPageBaseUrl = serverConfig.baseUrl))
         val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
         /** Tracks the active "reset inviteLinkCopied" job so rapid taps cancel the previous timer. */

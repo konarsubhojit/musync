@@ -10,6 +10,7 @@ import com.musync.data.model.SyncEvent
 import com.musync.data.model.Track
 import com.musync.data.model.YouTubeSearchResult
 import com.musync.data.model.YouTubeVideoInfo
+import com.musync.data.remote.ServerConfig
 import com.musync.data.repository.MusicRepository
 import com.musync.data.repository.RecentRoomsRepository
 import com.musync.data.repository.SessionRepository
@@ -1070,6 +1071,7 @@ class PlayerViewModelTest {
         userPreferencesRepository,
         mediaPlaybackController,
         queueManager,
+        ServerConfig(FakeUserPreferencesRepository()),
     )
 
     private fun buildViewModelWithRoomId(
@@ -1094,6 +1096,7 @@ class PlayerViewModelTest {
         userPreferencesRepository,
         mediaPlaybackController,
         queueManager,
+        ServerConfig(FakeUserPreferencesRepository()),
     )
 
     private fun buildViewModelWithRoomIdAndVideoId(
@@ -1119,6 +1122,7 @@ class PlayerViewModelTest {
         userPreferencesRepository,
         mediaPlaybackController,
         queueManager,
+        ServerConfig(FakeUserPreferencesRepository()),
     )
 
     // --- Fake repositories ---

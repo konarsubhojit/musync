@@ -505,6 +505,7 @@ private fun PlayerVideoArea(
             YouTubePlayerComposable(
                 videoId = uiState.videoId,
                 reloadNonce = uiState.playerReloadNonce,
+                playerPageBaseUrl = uiState.playerPageBaseUrl,
                 onPlayerReady = onPlayerReady,
                 onStateChange = { state ->
                     onPlaybackStateChanged(

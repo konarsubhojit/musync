@@ -30,84 +30,6 @@ private const val PLAYER_TAG = "YTPlayer"
 private val VIDEO_ID_PATTERN = Regex("^[A-Za-z0-9_-]{11}$")
 
 /**
- * HTML page that bootstraps the YouTube IFrame Player API inside a [WebView].
- *
- * The page is loaded with a `youtube.com` base URL so that the IFrame API's
- * `postMessage` cross-origin checks pass.  All player commands (play, pause,
- * seekTo, loadVideo) are exposed as plain JavaScript functions called from the
- * Android side; all player events are forwarded to the `AndroidBridge`
- * JavaScript interface exposed by [YTAndroidBridge].
- */
-private fun buildPlayerHtml(initialVideoId: String): String =
-    """
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #player { width: 100%; height: 100%; }
-      </style>
-    </head>
-    <body>
-    <div id="player"></div>
-    <script>
-      var ytPlayer;
-      var tag = document.createElement('script');
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.head.appendChild(tag);
-
-      function onYouTubeIframeAPIReady() {
-        ytPlayer = new YT.Player('player', {
-          width: '100%',
-          height: '100%',
-          videoId: '$initialVideoId',
-          playerVars: {
-            enablejsapi: 1,
-            origin: 'https://www.youtube.com',
-            playsinline: 1,
-            autoplay: 1,
-            controls: 0,
-            rel: 0,
-            showinfo: 0,
-            iv_load_policy: 3,
-            modestbranding: 1
-          },
-          events: {
-            onReady:       function(e) { AndroidBridge.onReady(); },
-            onStateChange: function(e) { AndroidBridge.onStateChange(e.data); },
-            onError:       function(e) { AndroidBridge.onError(e.data); }
-          }
-        });
-      }
-
-      function loadVideo(videoId, startSec) {
-        if (ytPlayer && ytPlayer.loadVideoById) {
-          ytPlayer.loadVideoById(videoId, startSec || 0);
-        }
-      }
-      function playVideo()   { if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo(); }
-      function pauseVideo()  { if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); }
-      function seekTo(sec)   { if (ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(sec, true); }
-
-      // Poll current-time & duration every 500 ms and forward to Android.
-      setInterval(function() {
-        try {
-          if (ytPlayer && ytPlayer.getCurrentTime) {
-            var curr = ytPlayer.getCurrentTime();
-            var dur = ytPlayer.getDuration();
-            if (curr !== undefined && curr !== null) AndroidBridge.onCurrentTime(curr);
-            if (dur !== undefined && dur !== null) AndroidBridge.onDuration(dur);
-          }
-        } catch (ignored) {}
-      }, 500);
-    </script>
-    </body>
-    </html>
-    """.trimIndent()
-
-/**
  * JavaScript interface that forwards YouTube IFrame API events to Kotlin callbacks.
  * Registered under the name `"AndroidBridge"` on the [WebView].
  */
@@ -156,6 +78,11 @@ private class YTAndroidBridge(
  * The player is powered directly by the YouTube IFrame Player API — no third-party
  * wrapper library is required.
  *
+ * The page itself is served by the MuSync backend at `GET /player`. It is loaded over
+ * real HTTP rather than injected with `loadDataWithBaseURL` so the iframe gets a
+ * genuine origin and Referer; synthetic origins are rejected by YouTube's embed
+ * checks with the 150-series error even for embeddable videos.
+ *
  * The [onPlayerReady] callback delivers a [YTPlayerController] once the IFrame API
  * is ready.  State-change, position, and duration events are forwarded via the
  * remaining callbacks so the caller can update its own UI state.
@@ -165,6 +92,7 @@ private class YTAndroidBridge(
 fun YouTubePlayerComposable(
     videoId: String,
     reloadNonce: Int,
+    playerPageBaseUrl: String,
     onPlayerReady: (YTPlayerController) -> Unit,
     onStateChange: (YTPlayerState) -> Unit,
     onError: (YTPlayerError) -> Unit,
@@ -332,16 +260,11 @@ fun YouTubePlayerComposable(
 
         if (initialLoadedVideoId.isEmpty() || (reloadNonce > 0 && requestKey != loadedRequestKey && controller == null)) {
             // First load or explicit reload nonce when controller is reset: load full HTML template.
-            AppLogger.i(PLAYER_TAG, "loading player page for videoId=$videoId nonce=$reloadNonce")
+            val pageUrl = "${playerPageBaseUrl.trimEnd('/')}/player?videoId=$videoId"
+            AppLogger.i(PLAYER_TAG, "loading player page $pageUrl nonce=$reloadNonce")
             initialLoadedVideoId = videoId
             loadedRequestKey = requestKey
-            webView.loadDataWithBaseURL(
-                "https://www.youtube.com",
-                buildPlayerHtml(videoId),
-                "text/html",
-                "UTF-8",
-                null,
-            )
+            webView.loadUrl(pageUrl)
         } else if (controller != null && requestKey != loadedRequestKey) {
             // Player already initialized: load new video dynamically via JavaScript bridge.
             AppLogger.i(PLAYER_TAG, "switching to videoId=$videoId via bridge")
