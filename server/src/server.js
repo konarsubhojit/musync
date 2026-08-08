@@ -115,7 +115,12 @@ function createApp(options = {}) {
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-    #player { width: 100%; height: 100%; }
+    /*
+      The IFrame API replaces #player with an <iframe> that keeps the id. Sizing it
+      absolutely guarantees a non-zero box even if the API writes its own width/height
+      attributes — a collapsed iframe still plays audio but renders no picture.
+    */
+    #player, iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
   </style>
 </head>
 <body>
