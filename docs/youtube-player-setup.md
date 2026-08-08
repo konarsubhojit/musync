@@ -24,13 +24,15 @@ All of these are already satisfied by the default app configuration.
 
 1. `YouTubePlayerComposable` creates an Android `WebView` and loads a small
    inline HTML page that bootstraps the YouTube IFrame Player API.
-2. The HTML page sets `youtube.com` as the `baseURL` (`loadDataWithBaseURL`) so that
-   the IFrame API's `postMessage` cross-origin checks pass without needing an explicit
-   `origin` parameter.
-3. The JavaScript in the page communicates with the Android side via a
+2. The HTML page sets `youtube.com` as the `baseURL` (`loadDataWithBaseURL`) and specifies
+   `enablejsapi: 1`, `origin: 'https://www.youtube.com'`, and `widget_referrer: 'https://www.youtube.com'`
+   so that the IFrame API's cross-origin checks pass consistently across physical Android devices.
+3. The `WebView` configures `WebChromeClient()` for HTML5 video rendering and sanitizes the default
+   `User-Agent` string (stripping `; wv`) to prevent YouTube from restricting embedded playback in Android WebViews.
+4. The JavaScript in the page communicates with the Android side via a
    `JavascriptInterface` (`AndroidBridge`).  This is how `onReady`, `onStateChange`,
    `onError`, and progress callbacks are delivered to Kotlin code.
-4. The composable wrapper registers a `DefaultLifecycleObserver` so the WebView pauses
+5. The composable wrapper registers a `DefaultLifecycleObserver` so the WebView pauses
    and resumes automatically with the Android lifecycle.
 
 ### Custom types

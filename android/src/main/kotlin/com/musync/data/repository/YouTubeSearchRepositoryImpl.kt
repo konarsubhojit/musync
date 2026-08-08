@@ -89,8 +89,8 @@ class YouTubeSearchRepositoryImpl
                         val item = JSONObject(body)
                         val info =
                             YouTubeVideoInfo(
-                                videoId = item.getString("videoId"),
-                                title = item.getString("title"),
+                                videoId = item.optString("videoId", videoId),
+                                title = item.optString("title", "YouTube Video"),
                                 channelTitle = item.optString("channelTitle"),
                             )
                         putCachedVideoInfo(videoId, info)

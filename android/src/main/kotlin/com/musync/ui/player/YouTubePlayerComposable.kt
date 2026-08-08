@@ -29,7 +29,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  * Android side; all player events are forwarded to the `AndroidBridge`
  * JavaScript interface exposed by [YTAndroidBridge].
  */
-private val PLAYER_HTML =
+private fun buildPlayerHtml(initialVideoId: String): String =
     """
     <!DOCTYPE html>
     <html>
@@ -53,10 +53,13 @@ private val PLAYER_HTML =
         ytPlayer = new YT.Player('player', {
           width: '100%',
           height: '100%',
-          videoId: '',
+          videoId: '$initialVideoId',
           playerVars: {
+            enablejsapi: 1,
+            origin: 'https://www.youtube.com',
+            widget_referrer: 'https://www.youtube.com',
             playsinline: 1,
-            autoplay: 0,
+            autoplay: 1,
             controls: 0,
             rel: 0,
             showinfo: 0,
@@ -73,19 +76,21 @@ private val PLAYER_HTML =
 
       function loadVideo(videoId, startSec) {
         if (ytPlayer && ytPlayer.loadVideoById) {
-          ytPlayer.loadVideoById({ videoId: videoId, startSeconds: startSec });
+          ytPlayer.loadVideoById(videoId, startSec || 0);
         }
       }
-      function playVideo()   { if (ytPlayer) ytPlayer.playVideo(); }
-      function pauseVideo()  { if (ytPlayer) ytPlayer.pauseVideo(); }
-      function seekTo(sec)   { if (ytPlayer) ytPlayer.seekTo(sec, true); }
+      function playVideo()   { if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo(); }
+      function pauseVideo()  { if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); }
+      function seekTo(sec)   { if (ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(sec, true); }
 
       // Poll current-time & duration every 500 ms and forward to Android.
       setInterval(function() {
         try {
           if (ytPlayer && ytPlayer.getCurrentTime) {
-            AndroidBridge.onCurrentTime(ytPlayer.getCurrentTime());
-            AndroidBridge.onDuration(ytPlayer.getDuration());
+            var curr = ytPlayer.getCurrentTime();
+            var dur = ytPlayer.getDuration();
+            if (curr !== undefined && curr !== null) AndroidBridge.onCurrentTime(curr);
+            if (dur !== undefined && dur !== null) AndroidBridge.onDuration(dur);
           }
         } catch (ignored) {}
       }, 500);
@@ -147,6 +152,7 @@ fun YouTubePlayerComposable(
 
     var controllerRef by remember { mutableStateOf<YTPlayerController?>(null) }
     var loadedRequestKey by remember { mutableStateOf("") }
+    var initialLoadedVideoId by remember { mutableStateOf("") }
 
     val webView =
         remember(context) {
@@ -156,7 +162,16 @@ fun YouTubePlayerComposable(
                     mediaPlaybackRequiresUserGesture = false
                     domStorageEnabled = true
                     cacheMode = WebSettings.LOAD_NO_CACHE
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    allowFileAccess = true
+                    allowContentAccess = true
+
+                    // Remove WebView token from User-Agent so YouTube iframe player
+                    // does not block playback with error 150/101 on physical Android devices.
+                    val defaultUa = userAgentString ?: ""
+                    userAgentString = defaultUa.replace("; wv", "").replace(" Version/4.0", "")
                 }
+                wv.webChromeClient = android.webkit.WebChromeClient()
                 wv.webViewClient =
                     object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
@@ -206,16 +221,6 @@ fun YouTubePlayerComposable(
                     )
 
                 wv.addJavascriptInterface(bridge, "AndroidBridge")
-
-                // Load the player page using youtube.com as the base URL so that
-                // the IFrame API's postMessage cross-origin checks pass.
-                wv.loadDataWithBaseURL(
-                    "https://www.youtube.com",
-                    PLAYER_HTML,
-                    "text/html",
-                    "UTF-8",
-                    null,
-                )
             }
         }
 
@@ -240,11 +245,26 @@ fun YouTubePlayerComposable(
         }
     }
 
-    // Load (or reload) the video whenever videoId / reloadNonce / controller changes.
+    // Initialize or update the YouTube player page when videoId or reloadNonce changes.
     LaunchedEffect(videoId, reloadNonce, controllerRef) {
+        if (videoId.isEmpty()) return@LaunchedEffect
+
         val controller = controllerRef
         val requestKey = "$videoId#$reloadNonce"
-        if (videoId.isNotEmpty() && controller != null && requestKey != loadedRequestKey) {
+
+        if (initialLoadedVideoId.isEmpty() || (reloadNonce > 0 && requestKey != loadedRequestKey && controller == null)) {
+            // First load or explicit reload nonce when controller is reset: load full HTML template.
+            initialLoadedVideoId = videoId
+            loadedRequestKey = requestKey
+            webView.loadDataWithBaseURL(
+                "https://www.youtube.com",
+                buildPlayerHtml(videoId),
+                "text/html",
+                "UTF-8",
+                null,
+            )
+        } else if (controller != null && requestKey != loadedRequestKey) {
+            // Player already initialized: load new video dynamically via JavaScript bridge.
             controller.loadVideo(videoId, 0f)
             loadedRequestKey = requestKey
         }
