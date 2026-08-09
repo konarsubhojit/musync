@@ -1,8 +1,12 @@
 # YouTube Player Setup
 
-The in-app YouTube player is powered by a **custom WebView** implementation that loads the
-[YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)
-directly — no third-party wrapper library is required.
+The in-app YouTube player is powered by
+[`androidyoutubeplayer`](https://github.com/PierfrancescoSoffritti/android-youtube-player),
+a maintained wrapper around the
+[YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference).
+The library owns the WebView that runs the IFrame API, including the parts that a
+hand-rolled integration gets wrong on many devices: the video surface, the fullscreen
+handoff, and the WebView lifecycle.
 **No YouTube API key is required for playback** — the player talks directly
 to YouTube's iFrame API.
 
@@ -22,27 +26,28 @@ All of these are already satisfied by the default app configuration.
 
 ## How it works
 
-1. `YouTubePlayerComposable` creates an Android `WebView` and loads the player page
-   served by the MuSync backend at `GET /player?videoId=<id>`, which bootstraps the
-   YouTube IFrame Player API.
-2. Serving the page over real HTTP (instead of injecting it with `loadDataWithBaseURL`)
-   gives the iframe a genuine origin and `Referer`; synthetic origins are rejected by
-   YouTube's embed checks with the 150-series error even for embeddable videos. The
-   page passes `enablejsapi: 1`, `origin: window.location.origin`, and `playsinline: 1`,
-   and pins the generated iframe to fill the viewport — a collapsed iframe still plays
-   audio but renders no picture.
-3. The `WebView` renders on a hardware layer (`LAYER_TYPE_HARDWARE`, with
-   `android:hardwareAccelerated="true"` on the `<application>`), because on a software
-   layer the video surface stays black while the audio track keeps playing. Its
-   `WebChromeClient` also implements `onShowCustomView`/`onHideCustomView` so a
-   fullscreen `<video>` handed over by YouTube is attached to the Activity's content
-   view instead of being dropped. The default `User-Agent` is left untouched: claiming
-   to be full Chrome makes YouTube treat the mismatch as abuse and reject playback.
-4. The JavaScript in the page communicates with the Android side via a
-   `JavascriptInterface` (`AndroidBridge`).  This is how `onReady`, `onStateChange`,
-   `onError`, and progress callbacks are delivered to Kotlin code.
-5. The composable wrapper registers a `DefaultLifecycleObserver` so the WebView pauses
-   and resumes automatically with the Android lifecycle.
+1. `YouTubePlayerComposable` hosts the library's `YouTubePlayerView` through Compose's
+   `AndroidView`, in a container that also serves as the parent for the view the player
+   hands over when it enters fullscreen. Nothing is served by the MuSync backend: the
+   library ships its own player page.
+2. The view is inflated from `res/layout/view_youtube_player.xml` with
+   `app:enableAutomaticInitialization="false"`, because that flag is only readable from
+   the XML attributes. It lets the composable call `initialize()` with its own
+   `IFramePlayerOptions`: `controls(0)` (the app draws its own controls, so a guest
+   cannot start playback behind the host's back), `fullscreen(0)`, `rel(0)`,
+   `ivLoadPolicy(3)`, and an explicit `origin` of `https://www.youtube.com`.
+3. The `origin` matters: the library loads its page with `loadDataWithBaseURL(origin, …)`,
+   and YouTube's embed checks answer synthetic origins — such as the library default of
+   `https://<package name>` — with the 150-series error even for embeddable videos.
+4. Player events arrive through an `AbstractYouTubePlayerListener` (`onReady`,
+   `onStateChange`, `onError`, `onCurrentSecond`, `onVideoDuration`) and are translated
+   to the app's own `YTPlayerState` / `YTPlayerError` vocabulary, so the sync layer is
+   unaware of which player implementation is in use.
+5. `onReady` produces a `YTPlayerController` backed by the library's `YouTubePlayer`.
+   The library marshals every command onto the main thread, so playback can be driven
+   straight from socket callbacks.
+6. `YouTubePlayerView` is registered as a lifecycle observer, which pauses playback when
+   the host stops and releases the WebView when it is destroyed.
 
 ### Custom types
 
@@ -64,7 +69,7 @@ All of these are already satisfied by the default app configuration.
 | `INVALID_PARAMETER` (2) | Bad videoId or player parameter | Verify the video ID is a valid 11-character YouTube ID |
 | `UNKNOWN` | Unexpected player error | Check internet connectivity; retry with a different video |
 | Black screen, no error callback | WebView blocked by a VPN, firewall, or cleartext policy | Check connectivity; ensure YouTube HTTPS endpoints are reachable |
-| Black screen but audio plays | Video surface not rendered: software rendering, or a fullscreen `<video>` that the host never attached | Keep `android:hardwareAccelerated="true"` and the `onShowCustomView` handling in place; check the `YTPlayer` logs |
+| Black screen but audio plays | The video surface is not composited: hardware acceleration disabled, or a fullscreen view the host never attached | Keep `android:hardwareAccelerated="true"` on the `<application>`; the library's `FullscreenListener` must stay wired up so the fullscreen view is added to a container; check the `YTPlayer` logs |
 
 ---
 
@@ -83,11 +88,13 @@ the exception is never used.
 
 ## Lifecycle integration
 
-`YouTubePlayerComposable` registers a `DefaultLifecycleObserver` so the player automatically:
+`YouTubePlayerComposable` registers the `YouTubePlayerView` as a lifecycle observer, so the
+player automatically:
 
-- **pauses** when the Activity goes to the background (`onPause`)
-- **resumes** the WebView when the Activity returns (`onResume`)
-- **destroys** the WebView when the composable leaves the composition
+- **pauses** when the host stops (`ON_STOP`)
+- **resumes** the WebView when the host returns (`ON_RESUME`)
+- **releases** the WebView when the host is destroyed, or when the composable leaves the
+  composition
 
 For background audio, MuSync uses `MediaPlaybackService` (a foreground
 service) which bridges the notification controls to the YouTube player while

@@ -18,6 +18,7 @@ appcompat = "1.7.0"
 documentfile = "1.0.1"
 material = "1.12.0"
 coil = "2.7.0"
+androidYoutubePlayer = "13.0.0"
 junit = "4.13.2"
 junitExt = "1.2.1"
 espressoCore = "3.6.1"
@@ -72,6 +73,9 @@ material = { group = "com.google.android.material", name = "material", version.r
 
 # Image loading
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
+# YouTube IFrame player (WebView wrapper handling the video-surface/lifecycle edge cases)
+android-youtube-player = { group = "com.pierfrancescosoffritti.androidyoutubeplayer", name = "core", version.ref = "androidYoutubePlayer" }
 
 # DataStore
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }

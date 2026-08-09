@@ -226,6 +226,11 @@ dependencies {
     // Image loading (used for YouTube thumbnails on CreateRoomScreen)
     implementation(libs.coil.compose)
 
+    // YouTube IFrame player. Wraps the IFrame API in a WebView whose video
+    // surface and lifecycle handling are already solved across OEM WebView
+    // builds; the previous hand-rolled WebView rendered audio without a picture.
+    implementation(libs.android.youtube.player)
+
     // DataStore
     implementation(libs.androidx.datastore.preferences)
 
