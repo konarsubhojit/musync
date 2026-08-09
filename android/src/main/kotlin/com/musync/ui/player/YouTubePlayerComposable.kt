@@ -1,21 +1,9 @@
 package com.musync.ui.player
 
-import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Color
+import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
-import android.webkit.ConsoleMessage
-import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -23,92 +11,120 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.musync.R
 import com.musync.logging.AppLogger
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.FullscreenListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.options.IFramePlayerOptions
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
 
-/** Shared log tag for the WebView-hosted YouTube player. */
+/** Shared log tag for the YouTube player. */
 private const val PLAYER_TAG = "YTPlayer"
 
-/** A literal YouTube video ID; anything else is unsafe to inject into the page. */
+/** A literal YouTube video ID; anything else is rejected before reaching the player. */
 private val VIDEO_ID_PATTERN = Regex("^[A-Za-z0-9_-]{11}$")
 
 /**
- * JavaScript interface that forwards YouTube IFrame API events to Kotlin callbacks.
- * Registered under the name `"AndroidBridge"` on the [WebView].
+ * Domain the embedded player reports as its origin.
+ *
+ * The library loads its page with `loadDataWithBaseURL(origin, …)`, so the origin
+ * doubles as the page's base URL. Its default (`https://<package name>`) is not a
+ * real domain, and YouTube's embed checks answer synthetic origins with the
+ * 150-series error ("playback on other websites has been disabled") even for videos
+ * whose owners do allow embedding — the failure mode this app hit repeatedly. The
+ * library's own documentation recommends this value for that reason.
  */
-private class YTAndroidBridge(
-    private val onReady: () -> Unit,
-    private val onStateChange: (YTPlayerState) -> Unit,
-    private val onError: (YTPlayerError) -> Unit,
-    private val onCurrentTime: (Float) -> Unit,
-    private val onDuration: (Float) -> Unit,
-) {
-    @JavascriptInterface
-    fun onReady() {
-        AppLogger.i(PLAYER_TAG, "iframe player ready")
-        onReady.invoke()
+private const val PLAYER_ORIGIN = "https://www.youtube.com"
+
+/** Maps the library's playback states onto the app-wide [YTPlayerState] vocabulary. */
+private fun PlayerConstants.PlayerState.toYTPlayerState(): YTPlayerState =
+    when (this) {
+        PlayerConstants.PlayerState.ENDED -> YTPlayerState.ENDED
+        PlayerConstants.PlayerState.PLAYING -> YTPlayerState.PLAYING
+        PlayerConstants.PlayerState.PAUSED -> YTPlayerState.PAUSED
+        PlayerConstants.PlayerState.BUFFERING -> YTPlayerState.BUFFERING
+        PlayerConstants.PlayerState.VIDEO_CUED -> YTPlayerState.VIDEO_CUED
+        PlayerConstants.PlayerState.UNSTARTED, PlayerConstants.PlayerState.UNKNOWN -> YTPlayerState.UNSTARTED
     }
 
-    @JavascriptInterface
-    fun onStateChange(state: Int) {
-        val mapped = YTPlayerState.fromInt(state)
-        AppLogger.i(PLAYER_TAG, "state change raw=$state mapped=$mapped")
-        onStateChange(mapped)
+/** Maps the library's error codes onto the app-wide [YTPlayerError] vocabulary. */
+private fun PlayerConstants.PlayerError.toYTPlayerError(): YTPlayerError =
+    when (this) {
+        PlayerConstants.PlayerError.INVALID_PARAMETER_IN_REQUEST -> YTPlayerError.INVALID_PARAMETER
+        PlayerConstants.PlayerError.HTML_5_PLAYER -> YTPlayerError.HTML5_ERROR
+        PlayerConstants.PlayerError.VIDEO_NOT_FOUND -> YTPlayerError.NOT_FOUND
+        PlayerConstants.PlayerError.VIDEO_NOT_PLAYABLE_IN_EMBEDDED_PLAYER -> YTPlayerError.EMBEDDING_NOT_ALLOWED
+        // Reported when the embed is served without a referer the API trusts; it is
+        // not actionable for the user, so it is surfaced as a generic failure.
+        PlayerConstants.PlayerError.REQUEST_MISSING_HTTP_REFERER -> YTPlayerError.UNKNOWN
+        PlayerConstants.PlayerError.UNKNOWN -> YTPlayerError.UNKNOWN
     }
 
-    @JavascriptInterface
-    fun onError(code: Int) {
-        val mapped = YTPlayerError.fromInt(code)
-        AppLogger.e(PLAYER_TAG, "iframe player error code=$code mapped=$mapped")
-        onError(mapped)
-    }
+/**
+ * [YTPlayerController] backed by the library's [YouTubePlayer].
+ *
+ * Every call is marshalled onto the main thread by the library itself, so the sync
+ * layer can drive playback from whichever thread a socket event arrives on.
+ */
+private class LibraryYTPlayerController(
+    private val player: YouTubePlayer,
+) : YTPlayerController {
+    override fun play() = player.play()
 
-    @JavascriptInterface
-    fun onCurrentTime(seconds: Double) {
-        AppLogger.v(PLAYER_TAG) { "currentTime=$seconds" }
-        onCurrentTime(seconds.toFloat())
-    }
+    override fun pause() = player.pause()
 
-    @JavascriptInterface
-    fun onDuration(seconds: Double) {
-        AppLogger.v(PLAYER_TAG) { "duration=$seconds" }
-        onDuration(seconds.toFloat())
+    override fun seekTo(seconds: Float) = player.seekTo(seconds)
+
+    override fun loadVideo(
+        videoId: String,
+        startSeconds: Float,
+    ) {
+        // The ID ends up inside a JavaScript call on the player page, so anything
+        // that is not a literal YouTube ID is dropped.
+        if (!VIDEO_ID_PATTERN.matches(videoId)) return
+        player.loadVideo(videoId, startSeconds)
     }
 }
 
 /**
- * [WebChromeClient] for the player WebView.
- *
- * Besides forwarding console output (the iframe API reports embed/playback problems
- * there), it attaches the fullscreen video view handed over by
- * [WebChromeClient.onShowCustomView] to the hosting Activity's content view. When the
- * host ignores that callback the video surface is never added to any window, so the
- * player area stays black while the audio track keeps playing.
+ * Owns the views used by [YouTubePlayerComposable]: the [YouTubePlayerView] itself plus
+ * the container it is hosted in, which doubles as the parent for the view the player
+ * hands over when it enters fullscreen.
  */
-private class FullscreenAwareChromeClient(
-    private val webView: WebView,
-) : WebChromeClient() {
-    private var customView: View? = null
-    private var customViewCallback: CustomViewCallback? = null
-
-    override fun onShowCustomView(
-        view: View,
-        callback: CustomViewCallback?,
-    ) {
-        val container = webView.context.findActivity()?.findViewById<ViewGroup>(android.R.id.content)
-        if (container == null || customView != null) {
-            callback?.onCustomViewHidden()
-            return
+private class YouTubePlayerHost(context: Context) {
+    val container =
+        FrameLayout(context).apply {
+            setBackgroundColor(Color.BLACK)
         }
-        AppLogger.i(PLAYER_TAG, "entering HTML5 fullscreen video")
-        customView = view
-        customViewCallback = callback
+
+    val playerView: YouTubePlayerView =
+        LayoutInflater
+            .from(context)
+            .inflate(R.layout.view_youtube_player, container, false) as YouTubePlayerView
+
+    private var fullscreenView: View? = null
+    private var released = false
+
+    init {
+        container.addView(playerView)
+    }
+
+    /**
+     * Shows the view the player renders into while in fullscreen. Without adding it to a
+     * container the video belongs to no window, which plays audio and draws nothing.
+     */
+    fun showFullscreenView(view: View) {
+        hideFullscreenView()
+        fullscreenView = view
+        playerView.visibility = View.INVISIBLE
         container.addView(
             view,
             FrameLayout.LayoutParams(
@@ -118,230 +134,169 @@ private class FullscreenAwareChromeClient(
         )
     }
 
-    override fun onHideCustomView() {
-        val view = customView ?: return
-        AppLogger.i(PLAYER_TAG, "leaving HTML5 fullscreen video")
-        (view.parent as? ViewGroup)?.removeView(view)
-        customView = null
-        customViewCallback?.onCustomViewHidden()
-        customViewCallback = null
+    /** Removes the fullscreen view and gives the inline player its surface back. */
+    fun hideFullscreenView() {
+        val view = fullscreenView ?: return
+        fullscreenView = null
+        container.removeView(view)
+        playerView.visibility = View.VISIBLE
     }
 
-    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-        // These messages are usually the only clue when the player stays blank.
-        AppLogger.i(
-            PLAYER_TAG,
-            "console [${message.messageLevel()}] ${message.message()} " +
-                "(${message.sourceId()}:${message.lineNumber()})",
-        )
-        return true
+    /** Releases the underlying WebView. Safe to call more than once. */
+    fun release() {
+        if (released) return
+        released = true
+        hideFullscreenView()
+        playerView.release()
     }
-}
-
-/** Walks the [ContextWrapper] chain to find the hosting [Activity], if any. */
-private fun Context.findActivity(): Activity? {
-    var current: Context? = this
-    while (current is ContextWrapper) {
-        if (current is Activity) return current
-        current = current.baseContext
-    }
-    return null
 }
 
 /**
- * Composable that embeds a custom WebView-based YouTube player without native controls.
- * The player is powered directly by the YouTube IFrame Player API — no third-party
- * wrapper library is required.
+ * Composable that embeds a YouTube player without the YouTube web UI, so the app's own
+ * overlay controls stay the single way to drive playback (which keeps host authority
+ * over guests intact).
  *
- * The page itself is served by the MuSync backend at `GET /player`. It is loaded over
- * real HTTP rather than injected with `loadDataWithBaseURL` so the iframe gets a
- * genuine origin and Referer; synthetic origins are rejected by YouTube's embed
- * checks with the 150-series error even for embeddable videos.
+ * Playback runs through the `androidyoutubeplayer` library rather than a hand-rolled
+ * WebView + IFrame API integration: the library owns the WebView's video surface,
+ * fullscreen handoff and lifecycle, which is exactly the plumbing that made the
+ * previous implementation play audio without ever drawing a picture.
  *
- * The [onPlayerReady] callback delivers a [YTPlayerController] once the IFrame API
- * is ready.  State-change, position, and duration events are forwarded via the
- * remaining callbacks so the caller can update its own UI state.
+ * The [onPlayerReady] callback delivers a [YTPlayerController] once the player is
+ * usable. State-change, position, duration, error and fullscreen events are forwarded
+ * through the remaining callbacks so the caller can update its own UI state.
  */
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun YouTubePlayerComposable(
     videoId: String,
     reloadNonce: Int,
-    playerPageBaseUrl: String,
     onPlayerReady: (YTPlayerController) -> Unit,
     onStateChange: (YTPlayerState) -> Unit,
     onError: (YTPlayerError) -> Unit,
     onCurrentSecond: (Float) -> Unit,
     onDuration: (Float) -> Unit,
+    onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var controllerRef by remember { mutableStateOf<YTPlayerController?>(null) }
+    // The player listener is registered once, for the lifetime of the view, so it has
+    // to read the callbacks through state holders to reach the current lambdas.
+    val currentOnPlayerReady = rememberUpdatedState(onPlayerReady)
+    val currentOnStateChange = rememberUpdatedState(onStateChange)
+    val currentOnError = rememberUpdatedState(onError)
+    val currentOnCurrentSecond = rememberUpdatedState(onCurrentSecond)
+    val currentOnDuration = rememberUpdatedState(onDuration)
+    val currentOnFullscreenChange = rememberUpdatedState(onFullscreenChange)
+
+    var controller by remember { mutableStateOf<YTPlayerController?>(null) }
     var loadedRequestKey by remember { mutableStateOf("") }
-    var initialLoadedVideoId by remember { mutableStateOf("") }
 
-    val webView =
+    val host =
         remember(context) {
-            WebView(context).also { wv ->
-                wv.settings.apply {
-                    javaScriptEnabled = true
-                    mediaPlaybackRequiresUserGesture = false
-                    domStorageEnabled = true
-                    cacheMode = WebSettings.LOAD_NO_CACHE
-                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    allowFileAccess = true
-                    allowContentAccess = true
-
-                    // The User-Agent is deliberately left untouched. Stripping the "; wv"
-                    // WebView token makes the client claim to be full Chrome, which no
-                    // longer matches how the page actually behaves; YouTube's embed
-                    // checks treat that mismatch as abuse and reject playback with the
-                    // 150-series error on every video, including embeddable ones.
-                    AppLogger.i(PLAYER_TAG, "WebView user-agent: $userAgentString")
-                }
-                // Video frames are composited on a hardware layer; on a software layer
-                // the surface stays black while the audio track keeps playing.
-                wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                wv.setBackgroundColor(Color.BLACK)
-                wv.webChromeClient = FullscreenAwareChromeClient(wv)
-                wv.webViewClient =
-                    object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView,
-                            request: WebResourceRequest,
-                        ): Boolean = false
-
-                        override fun onPageFinished(
-                            view: WebView,
-                            url: String,
+            YouTubePlayerHost(context).also { host ->
+                host.playerView.addFullscreenListener(
+                    object : FullscreenListener {
+                        override fun onEnterFullscreen(
+                            fullscreenView: View,
+                            exitFullscreen: () -> Unit,
                         ) {
-                            AppLogger.i(PLAYER_TAG, "page finished: $url")
+                            AppLogger.i(PLAYER_TAG, "player entered fullscreen")
+                            host.showFullscreenView(fullscreenView)
+                            currentOnFullscreenChange.value(true)
                         }
 
-                        override fun onReceivedError(
-                            view: WebView,
-                            request: WebResourceRequest,
-                            error: WebResourceError,
-                        ) {
-                            AppLogger.e(
-                                PLAYER_TAG,
-                                "resource error ${error.errorCode} for ${request.url}: ${error.description}",
-                            )
+                        override fun onExitFullscreen() {
+                            AppLogger.i(PLAYER_TAG, "player exited fullscreen")
+                            host.hideFullscreenView()
+                            currentOnFullscreenChange.value(false)
+                        }
+                    },
+                )
+
+                host.playerView.initialize(
+                    object : AbstractYouTubePlayerListener() {
+                        override fun onReady(youTubePlayer: YouTubePlayer) {
+                            AppLogger.i(PLAYER_TAG, "player ready")
+                            val readyController = LibraryYTPlayerController(youTubePlayer)
+                            controller = readyController
+                            currentOnPlayerReady.value(readyController)
                         }
 
-                        override fun onReceivedHttpError(
-                            view: WebView,
-                            request: WebResourceRequest,
-                            errorResponse: WebResourceResponse,
+                        override fun onStateChange(
+                            youTubePlayer: YouTubePlayer,
+                            state: PlayerConstants.PlayerState,
                         ) {
-                            AppLogger.w(
-                                PLAYER_TAG,
-                                "http ${errorResponse.statusCode} for ${request.url}",
-                            )
+                            AppLogger.i(PLAYER_TAG, "state change $state")
+                            currentOnStateChange.value(state.toYTPlayerState())
                         }
-                    }
 
-                val bridge =
-                    YTAndroidBridge(
-                        onReady = {
-                            val controller =
-                                object : YTPlayerController {
-                                    override fun play() {
-                                        wv.post { wv.evaluateJavascript("playVideo();", null) }
-                                    }
+                        override fun onError(
+                            youTubePlayer: YouTubePlayer,
+                            error: PlayerConstants.PlayerError,
+                        ) {
+                            AppLogger.e(PLAYER_TAG, "player error $error")
+                            currentOnError.value(error.toYTPlayerError())
+                        }
 
-                                    override fun pause() {
-                                        wv.post { wv.evaluateJavascript("pauseVideo();", null) }
-                                    }
+                        override fun onCurrentSecond(
+                            youTubePlayer: YouTubePlayer,
+                            second: Float,
+                        ) {
+                            AppLogger.v(PLAYER_TAG) { "currentTime=$second" }
+                            currentOnCurrentSecond.value(second)
+                        }
 
-                                    override fun seekTo(seconds: Float) {
-                                        wv.post {
-                                            wv.evaluateJavascript("seekTo($seconds);", null)
-                                        }
-                                    }
-
-                                    override fun loadVideo(
-                                        videoId: String,
-                                        startSeconds: Float,
-                                    ) {
-                                        // The ID is interpolated into JavaScript running on a
-                                        // youtube.com-origin page that has a live JS bridge, so
-                                        // reject anything that is not a literal YouTube ID.
-                                        if (!VIDEO_ID_PATTERN.matches(videoId)) return
-                                        wv.post {
-                                            wv.evaluateJavascript(
-                                                "loadVideo('$videoId', $startSeconds);",
-                                                null,
-                                            )
-                                        }
-                                    }
-                                }
-                            controllerRef = controller
-                            onPlayerReady(controller)
-                        },
-                        onStateChange = onStateChange,
-                        onError = onError,
-                        onCurrentTime = onCurrentSecond,
-                        onDuration = onDuration,
-                    )
-
-                wv.addJavascriptInterface(bridge, "AndroidBridge")
+                        override fun onVideoDuration(
+                            youTubePlayer: YouTubePlayer,
+                            duration: Float,
+                        ) {
+                            AppLogger.v(PLAYER_TAG) { "duration=$duration" }
+                            currentOnDuration.value(duration)
+                        }
+                    },
+                    IFramePlayerOptions
+                        .Builder(context)
+                        // No YouTube web UI: the app draws its own controls and a guest
+                        // must not be able to start playback behind the host's back.
+                        .controls(0)
+                        // Fullscreen is a layout decision owned by PlayerScreen, so the
+                        // player's own fullscreen button stays hidden.
+                        .fullscreen(0)
+                        .rel(0)
+                        .ivLoadPolicy(3)
+                        .origin(PLAYER_ORIGIN)
+                        .build(),
+                )
             }
         }
 
-    // Pause/resume the WebView player with the Activity/Fragment lifecycle so
-    // background audio is stopped when the user leaves the screen.
-    DisposableEffect(lifecycleOwner) {
-        val observer =
-            object : DefaultLifecycleObserver {
-                override fun onPause(owner: LifecycleOwner) {
-                    // The player page may not be loaded yet (e.g. the screen was left
-                    // before a video was selected), in which case `pauseVideo` does not
-                    // exist and a bare call raises a ReferenceError.
-                    webView.evaluateJavascript(
-                        "if (typeof pauseVideo === 'function') pauseVideo();",
-                        null,
-                    )
-                    webView.onPause()
-                }
-
-                override fun onResume(owner: LifecycleOwner) {
-                    webView.onResume()
-                }
-            }
-        lifecycleOwner.lifecycle.addObserver(observer)
+    // The view pauses playback when the host stops and releases the WebView when the
+    // host is destroyed, so background audio never outlives the screen.
+    DisposableEffect(lifecycleOwner, host) {
+        lifecycleOwner.lifecycle.addObserver(host.playerView)
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            webView.destroy()
+            lifecycleOwner.lifecycle.removeObserver(host.playerView)
+            host.release()
         }
     }
 
-    // Initialize or update the YouTube player page when videoId or reloadNonce changes.
-    LaunchedEffect(videoId, reloadNonce, controllerRef) {
+    // Load the requested video once the player is ready, and again whenever the video
+    // or the retry nonce changes.
+    LaunchedEffect(videoId, reloadNonce, controller) {
+        val activeController = controller ?: return@LaunchedEffect
         if (!VIDEO_ID_PATTERN.matches(videoId)) return@LaunchedEffect
 
-        val controller = controllerRef
         val requestKey = "$videoId#$reloadNonce"
+        if (requestKey == loadedRequestKey) return@LaunchedEffect
 
-        if (initialLoadedVideoId.isEmpty() || (reloadNonce > 0 && requestKey != loadedRequestKey && controller == null)) {
-            // First load or explicit reload nonce when controller is reset: load full HTML template.
-            val pageUrl = "${playerPageBaseUrl.trimEnd('/')}/player?videoId=$videoId"
-            AppLogger.i(PLAYER_TAG, "loading player page $pageUrl nonce=$reloadNonce")
-            initialLoadedVideoId = videoId
-            loadedRequestKey = requestKey
-            webView.loadUrl(pageUrl)
-        } else if (controller != null && requestKey != loadedRequestKey) {
-            // Player already initialized: load new video dynamically via JavaScript bridge.
-            AppLogger.i(PLAYER_TAG, "switching to videoId=$videoId via bridge")
-            controller.loadVideo(videoId, 0f)
-            loadedRequestKey = requestKey
-        }
+        AppLogger.i(PLAYER_TAG, "loading videoId=$videoId nonce=$reloadNonce")
+        loadedRequestKey = requestKey
+        activeController.loadVideo(videoId, 0f)
     }
 
     AndroidView(
-        factory = { webView },
+        factory = { host.container },
         modifier = modifier,
     )
 }

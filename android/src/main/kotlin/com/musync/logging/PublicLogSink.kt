@@ -214,7 +214,9 @@ internal class PublicLogSink private constructor(
             val file = File(dir, fileName)
             if (truncate && file.exists()) file.delete()
 
-            val stream = java.io.FileOutputStream(file, /* append = */ !truncate)
+            // `append` is the second FileOutputStream parameter: keep existing content
+            // unless the caller asked for a fresh file.
+            val stream = java.io.FileOutputStream(file, !truncate)
             return PublicLogSink(
                 stream = stream,
                 displayPath = file.absolutePath,

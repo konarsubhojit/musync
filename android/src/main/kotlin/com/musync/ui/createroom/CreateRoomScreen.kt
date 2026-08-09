@@ -111,7 +111,8 @@ fun CreateRoomScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),        ) {
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
             item {
                 Spacer(Modifier.height(8.dp))
 

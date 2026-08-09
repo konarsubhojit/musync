@@ -28,8 +28,6 @@ enum class PlayerTransientError {
 
 data class PlayerUiState(
     val videoId: String = "",
-    /** Origin serving the WebView player page (`<base>/player`). */
-    val playerPageBaseUrl: String = "",
     val trackTitle: String = "",
     val isPlaying: Boolean = false,
     val currentSecond: Float = 0f,

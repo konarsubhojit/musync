@@ -131,6 +131,20 @@ android {
         }
     }
 
+    // ── Release signing ───────────────────────────────────────────────────────
+    // CI publishes the release APK, and an unsigned APK cannot be installed, so
+    // the release build type is signed with the very same debug keystore as the
+    // debug build type: the CI-supplied one when the DEBUG_* variables above are
+    // set (keeping the SHA-256 fingerprint stable for
+    // `ANDROID_APP_SHA256_FINGERPRINTS`), otherwise the default Android debug
+    // keystore so local builds and forks still produce an installable APK.
+    val releaseSigningConfig =
+        if (hasCustomDebugSigning) {
+            signingConfigs.getByName("debugCustom")
+        } else {
+            signingConfigs.getByName("debug")
+        }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -139,6 +153,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = releaseSigningConfig
         }
         debug {
             isMinifyEnabled = false
@@ -225,6 +240,11 @@ dependencies {
 
     // Image loading (used for YouTube thumbnails on CreateRoomScreen)
     implementation(libs.coil.compose)
+
+    // YouTube IFrame player. Wraps the IFrame API in a WebView whose video
+    // surface and lifecycle handling are already solved across OEM WebView
+    // builds; the previous hand-rolled WebView rendered audio without a picture.
+    implementation(libs.android.youtube.player)
 
     // DataStore
     implementation(libs.androidx.datastore.preferences)

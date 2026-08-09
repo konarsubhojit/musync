@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Host view for the YouTube IFrame player.
+
+  It is declared in XML rather than constructed in Kotlin purely because
+  `enableAutomaticInitialization` is read from the AttributeSet inside the
+  YouTubePlayerView constructor: a programmatically created view always
+  initialises itself with the library defaults (which include the YouTube web
+  UI controls) before we get a chance to opt out. Disabling it here lets us
+  call `initialize()` with our own IFramePlayerOptions.
+-->
+<com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/youtube_player_view"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:enableAutomaticInitialization="false" />

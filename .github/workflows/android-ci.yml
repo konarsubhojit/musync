@@ -8,12 +8,12 @@ on:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build release APK
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
-    # Inject build-time configuration so the produced debug APK is fully
+    # Inject build-time configuration so the produced release APK is fully
     # working against a real backend rather than the emulator-only defaults
     # baked into the source tree.
     #
@@ -49,8 +49,9 @@ jobs:
       # When `secrets.DEBUG_KEYSTORE_BASE64` is configured in the repository,
       # the keystore is decoded here and the four signing env vars are written
       # to $GITHUB_ENV so every subsequent Gradle step picks them up
-      # automatically.  This ensures the debug APK always carries the same
-      # SHA-256 certificate fingerprint, making it stable for use in
+      # automatically.  This keystore signs both the debug and the release
+      # build types, so the release APK always carries the same SHA-256
+      # certificate fingerprint, making it stable for use in
       # `ANDROID_APP_SHA256_FINGERPRINTS` on the server side.
       #
       # Required repository secrets (all must be set together):
@@ -60,9 +61,9 @@ jobs:
       #   DEBUG_KEY_PASSWORD       – key password
       #
       # When none of these secrets are set the step is skipped entirely and
-      # the signing env vars are never exported, so both build steps below fall
-      # back to the default Android debug keystore.  Forks and pull requests
-      # from external contributors keep working without any secrets configured.
+      # the signing env vars are never exported, so the build falls back to the
+      # default Android debug keystore.  Forks and pull requests from external
+      # contributors keep working without any secrets configured.
       - name: Decode debug keystore
         if: ${{ env.DEBUG_KEYSTORE_BASE64 != '' }}
         env:
@@ -80,8 +81,8 @@ jobs:
             echo "DEBUG_KEY_PASSWORD=$DEBUG_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
-      - name: Build debug APK
-        run: ./gradlew :android:assembleDebug
+      - name: Build release APK
+        run: ./gradlew :android:assembleRelease
 
       - name: Run unit tests
         run: ./gradlew :android:testDebugUnitTest
@@ -93,16 +94,16 @@ jobs:
           # so the awk double-quote delimiter is correct for this file.
           VERSION=$(awk -F'"' '/versionName[[:space:]]*=/ {print $2; exit}' android/build.gradle.kts)
           echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
-          APK=$(find android/build/outputs/apk/debug/ -name "*.apk" | head -1)
+          APK=$(find android/build/outputs/apk/release/ -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
-            echo "Error: no APK found under android/build/outputs/apk/debug/" >&2
+            echo "Error: no APK found under android/build/outputs/apk/release/" >&2
             exit 1
           fi
-          mv "$APK" "android/build/outputs/apk/debug/musync-${VERSION}-debug.apk"
+          mv "$APK" "android/build/outputs/apk/release/musync-${VERSION}-release.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: musync-${{ steps.version.outputs.name }}-debug
-          path: android/build/outputs/apk/debug/musync-${{ steps.version.outputs.name }}-debug.apk
+          name: musync-${{ steps.version.outputs.name }}-release
+          path: android/build/outputs/apk/release/musync-${{ steps.version.outputs.name }}-release.apk
           retention-days: 7

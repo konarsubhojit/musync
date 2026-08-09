@@ -308,6 +308,7 @@ fun PlayerScreen(
                 canToggleFullscreen = canUseFullscreen,
                 isFullscreen = true,
                 onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
+                onFullscreenChange = { enabled -> isFullscreenEnabled = enabled },
                 fillContainer = true,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -366,6 +367,7 @@ fun PlayerScreen(
                         canToggleFullscreen = false,
                         isFullscreen = false,
                         onToggleFullscreen = {},
+                        onFullscreenChange = { enabled -> isFullscreenEnabled = enabled },
                         modifier =
                             Modifier
                                 .weight(1.2f)
@@ -421,6 +423,7 @@ fun PlayerScreen(
                         canToggleFullscreen = canUseFullscreen,
                         isFullscreen = false,
                         onToggleFullscreen = { isFullscreenEnabled = !isFullscreenEnabled },
+                        onFullscreenChange = { enabled -> isFullscreenEnabled = enabled },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     PlayerTabsSection(
@@ -488,6 +491,7 @@ private fun PlayerVideoArea(
     canToggleFullscreen: Boolean,
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     fillContainer: Boolean = false,
 ) {
@@ -505,7 +509,6 @@ private fun PlayerVideoArea(
             YouTubePlayerComposable(
                 videoId = uiState.videoId,
                 reloadNonce = uiState.playerReloadNonce,
-                playerPageBaseUrl = uiState.playerPageBaseUrl,
                 onPlayerReady = onPlayerReady,
                 onStateChange = { state ->
                     onPlaybackStateChanged(
@@ -519,6 +522,7 @@ private fun PlayerVideoArea(
                 onError = { error -> onPlayerError(error) },
                 onCurrentSecond = onCurrentSecond,
                 onDuration = onDurationReceived,
+                onFullscreenChange = onFullscreenChange,
                 modifier = Modifier.fillMaxSize(),
             )
 
