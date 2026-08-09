@@ -1,13 +1,22 @@
 package com.musync.ui.player
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.Color
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +83,72 @@ private class YTAndroidBridge(
 }
 
 /**
+ * [WebChromeClient] for the player WebView.
+ *
+ * Besides forwarding console output (the iframe API reports embed/playback problems
+ * there), it attaches the fullscreen video view handed over by
+ * [WebChromeClient.onShowCustomView] to the hosting Activity's content view. When the
+ * host ignores that callback the video surface is never added to any window, so the
+ * player area stays black while the audio track keeps playing.
+ */
+private class FullscreenAwareChromeClient(
+    private val webView: WebView,
+) : WebChromeClient() {
+    private var customView: View? = null
+    private var customViewCallback: CustomViewCallback? = null
+
+    override fun onShowCustomView(
+        view: View,
+        callback: CustomViewCallback?,
+    ) {
+        val container = webView.context.findActivity()?.findViewById<ViewGroup>(android.R.id.content)
+        if (container == null || customView != null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+        AppLogger.i(PLAYER_TAG, "entering HTML5 fullscreen video")
+        customView = view
+        customViewCallback = callback
+        container.addView(
+            view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+    }
+
+    override fun onHideCustomView() {
+        val view = customView ?: return
+        AppLogger.i(PLAYER_TAG, "leaving HTML5 fullscreen video")
+        (view.parent as? ViewGroup)?.removeView(view)
+        customView = null
+        customViewCallback?.onCustomViewHidden()
+        customViewCallback = null
+    }
+
+    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+        // These messages are usually the only clue when the player stays blank.
+        AppLogger.i(
+            PLAYER_TAG,
+            "console [${message.messageLevel()}] ${message.message()} " +
+                "(${message.sourceId()}:${message.lineNumber()})",
+        )
+        return true
+    }
+}
+
+/** Walks the [ContextWrapper] chain to find the hosting [Activity], if any. */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/**
  * Composable that embeds a custom WebView-based YouTube player without native controls.
  * The player is powered directly by the YouTube IFrame Player API — no third-party
  * wrapper library is required.
@@ -126,19 +201,11 @@ fun YouTubePlayerComposable(
                     // 150-series error on every video, including embeddable ones.
                     AppLogger.i(PLAYER_TAG, "WebView user-agent: $userAgentString")
                 }
-                wv.webChromeClient =
-                    object : android.webkit.WebChromeClient() {
-                        override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
-                            // The iframe API reports embed/playback problems here; these
-                            // messages are usually the only clue when the player stays blank.
-                            AppLogger.i(
-                                PLAYER_TAG,
-                                "console [${message.messageLevel()}] ${message.message()} " +
-                                    "(${message.sourceId()}:${message.lineNumber()})",
-                            )
-                            return true
-                        }
-                    }
+                // Video frames are composited on a hardware layer; on a software layer
+                // the surface stays black while the audio track keeps playing.
+                wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                wv.setBackgroundColor(Color.BLACK)
+                wv.webChromeClient = FullscreenAwareChromeClient(wv)
                 wv.webViewClient =
                     object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(

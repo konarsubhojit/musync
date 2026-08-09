@@ -22,13 +22,22 @@ All of these are already satisfied by the default app configuration.
 
 ## How it works
 
-1. `YouTubePlayerComposable` creates an Android `WebView` and loads a small
-   inline HTML page that bootstraps the YouTube IFrame Player API.
-2. The HTML page sets `youtube.com` as the `baseURL` (`loadDataWithBaseURL`) and specifies
-   `enablejsapi: 1`, `origin: 'https://www.youtube.com'`, and `widget_referrer: 'https://www.youtube.com'`
-   so that the IFrame API's cross-origin checks pass consistently across physical Android devices.
-3. The `WebView` configures `WebChromeClient()` for HTML5 video rendering and sanitizes the default
-   `User-Agent` string (stripping `; wv`) to prevent YouTube from restricting embedded playback in Android WebViews.
+1. `YouTubePlayerComposable` creates an Android `WebView` and loads the player page
+   served by the MuSync backend at `GET /player?videoId=<id>`, which bootstraps the
+   YouTube IFrame Player API.
+2. Serving the page over real HTTP (instead of injecting it with `loadDataWithBaseURL`)
+   gives the iframe a genuine origin and `Referer`; synthetic origins are rejected by
+   YouTube's embed checks with the 150-series error even for embeddable videos. The
+   page passes `enablejsapi: 1`, `origin: window.location.origin`, and `playsinline: 1`,
+   and pins the generated iframe to fill the viewport — a collapsed iframe still plays
+   audio but renders no picture.
+3. The `WebView` renders on a hardware layer (`LAYER_TYPE_HARDWARE`, with
+   `android:hardwareAccelerated="true"` on the `<application>`), because on a software
+   layer the video surface stays black while the audio track keeps playing. Its
+   `WebChromeClient` also implements `onShowCustomView`/`onHideCustomView` so a
+   fullscreen `<video>` handed over by YouTube is attached to the Activity's content
+   view instead of being dropped. The default `User-Agent` is left untouched: claiming
+   to be full Chrome makes YouTube treat the mismatch as abuse and reject playback.
 4. The JavaScript in the page communicates with the Android side via a
    `JavascriptInterface` (`AndroidBridge`).  This is how `onReady`, `onStateChange`,
    `onError`, and progress callbacks are delivered to Kotlin code.
@@ -55,6 +64,7 @@ All of these are already satisfied by the default app configuration.
 | `INVALID_PARAMETER` (2) | Bad videoId or player parameter | Verify the video ID is a valid 11-character YouTube ID |
 | `UNKNOWN` | Unexpected player error | Check internet connectivity; retry with a different video |
 | Black screen, no error callback | WebView blocked by a VPN, firewall, or cleartext policy | Check connectivity; ensure YouTube HTTPS endpoints are reachable |
+| Black screen but audio plays | Video surface not rendered: software rendering, or a fullscreen `<video>` that the host never attached | Keep `android:hardwareAccelerated="true"` and the `onShowCustomView` handling in place; check the `YTPlayer` logs |
 
 ---
 
