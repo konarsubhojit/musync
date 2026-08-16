@@ -30,6 +30,38 @@ Override locally:
 
 YouTube search and in-room playback require a YouTube Data API v3 key configured on the server. See [docs/youtube-api-key.md](docs/youtube-api-key.md) for step-by-step setup.
 
+### YouTube quota & caching (Upstash Redis)
+
+The YouTube Data API v3 gives a project **10,000 quota units/day** and a single
+`search.list` call costs **100 units** — that is only **100 searches per day for
+the entire server** before every user's search starts failing. Caching is
+therefore mandatory rather than optional.
+
+Set both variables below (values from the [Upstash console](https://console.upstash.com)) to cache
+YouTube responses in Redis over HTTP:
+
+| Variable | Purpose |
+| --- | --- |
+| `UPSTASH_REDIS_REST_URL` | Upstash REST endpoint (also used for room state) |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash REST token |
+| `YOUTUBE_CACHE_TTL_SECONDS` | TTL for cached search results (default `86400` = 24 h) |
+| `YOUTUBE_DAILY_QUOTA_UNITS` | Daily quota used for the metrics/warning threshold (default `10000`) |
+
+How it works:
+
+- Search queries are normalized (lowercased, trimmed, whitespace collapsed) before hashing, so
+  `"Daft Punk"`, `"daft  punk "` and `"DAFT PUNK"` share one entry under `yt:search:v1:<hash>`.
+- Video metadata (`videos.list`, 1 unit) is cached for 7 days under `yt:video:v1:<videoId>`.
+- Concurrent identical searches on a cold cache are coalesced into a single upstream call.
+- When the quota is exhausted the server serves stale cache entries if it has any, otherwise it
+  returns `429 {"error": "...", "code": "quota_exceeded"}` instead of a generic 500.
+- `GET /metrics/youtube` reports cache hits/misses, stale serves and the estimated quota units
+  consumed today; a warning is logged once daily usage crosses 80 % of the quota.
+
+**The cache is optional.** If the Upstash variables are unset (local development, forks) the cache
+becomes a no-op pass-through and the server behaves exactly as it does today. Cache errors are
+never fatal — requests fall through to the live API.
+
 ### Common misconfigurations
 
 | Mistake | Symptom | Correct value |

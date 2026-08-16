@@ -11,6 +11,15 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createRoomStore, isVideoRef } = require('./roomStore');
+const {
+  createYouTubeCache,
+  searchCacheKey,
+  videoCacheKey,
+  searchTtlSeconds,
+  QuotaExceededError,
+  QUOTA_UNITS,
+  VIDEO_TTL_SECONDS,
+} = require('./youtubeCache');
 const { logger } = require('./logger');
 
 /**
@@ -32,10 +41,15 @@ const { logger } = require('./logger');
  *   Optional room store override — pass a custom store in tests or
  *   leave unset to auto-select Redis (when env vars are present) or
  *   the in-memory fallback.
+ * @param {ReturnType<import('./youtubeCache').createYouTubeCache>} [options.youtubeCache]
+ *   Optional YouTube cache override — pass a cache backed by a fake Redis in
+ *   tests, or leave unset to auto-select Upstash Redis (when env vars are
+ *   present) or a no-op pass-through.
  * @returns {AppBundle}
  */
 function createApp(options = {}) {
   const roomStore = options.roomStore ?? createRoomStore();
+  const youtubeCache = options.youtubeCache ?? createYouTubeCache();
 
   const app = express();
   const videoInfoCache = new Map();
@@ -80,9 +94,78 @@ function createApp(options = {}) {
     videoInfoCache.set(videoId, payload);
   }
 
+  /**
+   * Detects the YouTube Data API's "daily quota exhausted" response
+   * (HTTP 403 with reason `quotaExceeded` / `dailyLimitExceeded`).
+   *
+   * @param {Response} response
+   * @returns {Promise<boolean>}
+   */
+  async function isQuotaExceededResponse(response) {
+    if (response.status !== 403 || typeof response.json !== 'function') return false;
+    try {
+      const body = await response.json();
+      const reasons = (body?.error?.errors ?? []).map((e) => e?.reason);
+      return (
+        reasons.includes('quotaExceeded') ||
+        reasons.includes('dailyLimitExceeded') ||
+        body?.error?.status === 'RESOURCE_EXHAUSTED'
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Builds the error thrown for a non-OK upstream response so the route can
+   * map it onto the right status code.
+   *
+   * @param {Response} response
+   * @returns {Promise<Error>}
+   */
+  async function upstreamError(response) {
+    if (await isQuotaExceededResponse(response)) return new QuotaExceededError();
+    return Object.assign(new Error(`YouTube API responded with ${response.status}`), {
+      code: 'UPSTREAM',
+    });
+  }
+
+  /**
+   * Maps a YouTube proxy failure onto an HTTP response. Quota exhaustion gets
+   * its own status/code so clients can tell it apart from a generic failure.
+   *
+   * @param {import('express').Response} res
+   * @param {Error} err
+   * @param {Record<string, unknown>} context
+   */
+  function respondYouTubeError(res, err, context) {
+    if (err instanceof QuotaExceededError) {
+      logger.warn('youtube quota exceeded', context);
+      res.status(429).json({
+        error: 'YouTube search is temporarily unavailable: the daily API quota has been used up. Please try again later.',
+        code: 'quota_exceeded',
+      });
+    } else if (err.name === 'AbortError') {
+      res.status(504).json({ error: 'YouTube API request timed out' });
+    } else if (err.code === 'UPSTREAM') {
+      res.status(502).json({ error: 'YouTube API error' });
+    } else {
+      logger.error('youtube request failed', { ...context, err });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
   // ── Health check ──────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  // ── YouTube cache / quota metrics ─────────────────────────────────────────
+  // GET /metrics/youtube
+  // Cache hit/miss counters plus the estimated quota units consumed today, so
+  // quota exhaustion can be spotted before users hit it.
+  app.get('/metrics/youtube', (_req, res) => {
+    res.json(youtubeCache.getMetrics());
   });
 
   // ── YouTube search proxy ──────────────────────────────────────────────────
@@ -94,22 +177,11 @@ function createApp(options = {}) {
   //   YOUTUBE_API_KEY   YouTube Data API v3 key (required for this route to work).
   //                     When unset the route responds 503.
   //   YOUTUBE_SEARCH_TIMEOUT_MS  Fetch timeout in ms (default: 8000).
-  app.get('/api/youtube/search', async (req, res) => {
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!apiKey) {
-      res.status(503).json({ error: 'YouTube search not configured' });
-      return;
-    }
-    const q = (req.query.q ?? '').trim();
-    if (!q) {
-      res.status(400).json({ error: 'Missing search query' });
-      return;
-    }
-    if (q.length > 200) {
-      res.status(400).json({ error: 'Search query too long' });
-      return;
-    }
-    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+  //   YOUTUBE_CACHE_TTL_SECONDS  Cache TTL for search results (default: 86400).
+  //
+  // A `search.list` call costs 100 of the 10,000 daily quota units, so results
+  // are cached under a normalized-query key (see `youtubeCache.js`).
+  async function fetchYouTubeSearch(q, apiKey, timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -128,8 +200,7 @@ function createApp(options = {}) {
       const response = await fetch(url.toString(), { signal: controller.signal });
       if (!response.ok) {
         logger.warn('youtube search upstream error', { status: response.status, q });
-        res.status(502).json({ error: 'YouTube API error' });
-        return;
+        throw await upstreamError(response);
       }
       const data = await response.json();
       const items = (data.items ?? []).map((item) => ({
@@ -141,16 +212,40 @@ function createApp(options = {}) {
           item.snippet.thumbnails?.default?.url ??
           '',
       }));
-      res.json({ items });
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        res.status(504).json({ error: 'YouTube API request timed out' });
-      } else {
-        logger.error('youtube search failed', { q, err });
-        res.status(500).json({ error: 'Internal server error' });
-      }
+      return { items };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  app.get('/api/youtube/search', async (req, res) => {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'YouTube search not configured' });
+      return;
+    }
+    const q = (req.query.q ?? '').trim();
+    if (!q) {
+      res.status(400).json({ error: 'Missing search query' });
+      return;
+    }
+    if (q.length > 200) {
+      res.status(400).json({ error: 'Search query too long' });
+      return;
+    }
+    const timeoutMs = parseInt(process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000', 10);
+    try {
+      const { value, source } = await youtubeCache.fetchWithCache({
+        key: searchCacheKey(q),
+        ttlSeconds: searchTtlSeconds(),
+        quotaUnits: QUOTA_UNITS.search,
+        fetcher: () => fetchYouTubeSearch(q, apiKey, timeoutMs),
+      });
+      const body = { items: value.items ?? [] };
+      if (source === 'stale') body.stale = true;
+      res.json(body);
+    } catch (err) {
+      respondYouTubeError(res, err, { q });
     }
   });
 
@@ -163,6 +258,38 @@ function createApp(options = {}) {
   //   YOUTUBE_VIDEO_INFO_TIMEOUT_MS  Fetch timeout in ms (default: fallback to
   //                                  YOUTUBE_SEARCH_TIMEOUT_MS, then 8000).
   //   YOUTUBE_VIDEO_INFO_CACHE_SIZE  Max in-memory cached items (default: 500).
+  //
+  // Two cache layers sit in front of the API: a per-process LRU map and, when
+  // Upstash is configured, a shared Redis entry with a 7-day TTL.
+  async function fetchYouTubeVideoInfo(videoId, apiKey, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      logger.info('youtube video-info request', { videoId, timeoutMs });
+      const url = new URL('https://www.googleapis.com/youtube/v3/videos');
+      url.searchParams.set('part', 'snippet');
+      url.searchParams.set('id', videoId);
+      url.searchParams.set('key', apiKey);
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) {
+        logger.warn('youtube video-info upstream error', { status: response.status, videoId });
+        throw await upstreamError(response);
+      }
+      const data = await response.json();
+      const item = data.items?.[0];
+      if (!item?.snippet?.title) {
+        throw Object.assign(new Error('Video not found'), { code: 'NOT_FOUND' });
+      }
+      return {
+        videoId,
+        title: item.snippet.title,
+        channelTitle: item.snippet.channelTitle ?? 'YouTube',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   app.get('/api/youtube/video-info/:videoId', async (req, res) => {
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
@@ -186,44 +313,22 @@ function createApp(options = {}) {
       process.env.YOUTUBE_VIDEO_INFO_TIMEOUT_MS ?? process.env.YOUTUBE_SEARCH_TIMEOUT_MS ?? '8000',
       10,
     );
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      logger.info('youtube video-info request', { videoId, timeoutMs });
-      const url = new URL('https://www.googleapis.com/youtube/v3/videos');
-      url.searchParams.set('part', 'snippet');
-      url.searchParams.set('id', videoId);
-      url.searchParams.set('key', apiKey);
-      const response = await fetch(url.toString(), { signal: controller.signal });
-      if (!response.ok) {
-        logger.warn('youtube video-info upstream error', { status: response.status, videoId });
-        res.status(502).json({ error: 'YouTube API error' });
-        return;
-      }
-      const data = await response.json();
-      const item = data.items?.[0];
-      if (!item?.snippet?.title) {
-        res.status(404).json({ error: 'Video not found' });
-        return;
-      }
-
-      const payload = {
-        videoId,
-        title: item.snippet.title,
-        channelTitle: item.snippet.channelTitle ?? 'YouTube',
-      };
-      setVideoInfoCache(videoId, payload);
-      res.json(payload);
+      const { value } = await youtubeCache.fetchWithCache({
+        key: videoCacheKey(videoId),
+        ttlSeconds: VIDEO_TTL_SECONDS,
+        quotaUnits: QUOTA_UNITS.videos,
+        fetcher: () => fetchYouTubeVideoInfo(videoId, apiKey, timeoutMs),
+      });
+      setVideoInfoCache(videoId, value);
+      res.json(value);
     } catch (err) {
-      if (err.name === 'AbortError') {
-        res.status(504).json({ error: 'YouTube API request timed out' });
+      if (err.code === 'NOT_FOUND') {
+        res.status(404).json({ error: 'Video not found' });
       } else {
-        logger.error('youtube video-info failed', { videoId, err });
-        res.status(500).json({ error: 'Internal server error' });
+        respondYouTubeError(res, err, { videoId });
       }
-    } finally {
-      clearTimeout(timer);
     }
   });
 
